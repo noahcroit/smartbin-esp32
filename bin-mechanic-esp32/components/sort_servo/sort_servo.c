@@ -78,7 +78,7 @@ int sort_servo_enable(sort_servo_config_t *config){
 }
 
 int sort_servo_disable(sort_servo_config_t *config){
-    mcpwm_timer_start_stop(config->timer, MCPWM_TIMER_STOP_EMPTY);
+    mcpwm_timer_start_stop(config->timer, MCPWM_TIMER_STOP_FULL);
     mcpwm_timer_disable(config->timer);
     return 0;
 }
