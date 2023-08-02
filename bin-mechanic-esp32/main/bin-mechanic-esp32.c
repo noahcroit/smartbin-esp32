@@ -27,8 +27,7 @@
 
 
 
-static const char *TAG = "MQTT_EXAMPLE";
-
+static const char *TAG = "SYSTEM_LOG";
 static void log_error_if_nonzero(const char *message, int error_code)
 {
     if (error_code != 0) {
@@ -66,6 +65,10 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 
         //msg_id = esp_mqtt_client_unsubscribe(client, "/topic/qos1");
         //ESP_LOGI(TAG, "sent unsubscribe successful, msg_id=%d", msg_id);
+
+        /* Subscribe of every tags should be here, after connection is success
+         *
+         */
         msg_id = esp_mqtt_client_subscribe(client, "/topic/qos0", 0);
         ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
 
@@ -76,8 +79,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 
     case MQTT_EVENT_SUBSCRIBED:
         ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
-        //msg_id = esp_mqtt_client_publish(client, "/topic/qos0", "data", 0, 0, 0);
-        //ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
         break;
     case MQTT_EVENT_UNSUBSCRIBED:
         ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id);
@@ -97,7 +98,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             log_error_if_nonzero("reported from tls stack", event->error_handle->esp_tls_stack_err);
             log_error_if_nonzero("captured as transport's socket errno",  event->error_handle->esp_transport_sock_errno);
             ESP_LOGI(TAG, "Last errno string (%s)", strerror(event->error_handle->esp_transport_sock_errno));
-
         }
         break;
     default:
@@ -155,7 +155,9 @@ void app_main(void)
     opener_config.in2 = GPIO_NUM_4;
     opener_config.sw_fullopen  = GPIO_NUM_22;
     opener_config.sw_fullclose = GPIO_NUM_23;
+    opener_config.duty = 0;
     opener_init(&opener_config);
+    opener_setduty(&opener_config, 4000);
     
     /*
      * Sorting Servo Configuration
@@ -165,16 +167,15 @@ void app_main(void)
     sort_servo_config_t servo_r;
     servo_l.gpio_servo = 2;
     servo_r.gpio_servo = 4;
-    sort_servo_init(&servo_l);
-    sort_servo_init(&servo_r);
-    sort_servo_enable(&servo_l);
-    sort_servo_enable(&servo_r);
-
+    //sort_servo_init(&servo_l);
+    //sort_servo_init(&servo_r);
+    //sort_servo_enable(&servo_l);
+    //sort_servo_enable(&servo_r);
 
     int angle_l = 0;
     int angle_r = 0;
-    sort_servo_set_angle(&servo_l, angle_l);
-    sort_servo_set_angle(&servo_r, angle_r);
+    //sort_servo_set_angle(&servo_l, angle_l);
+    //sort_servo_set_angle(&servo_r, angle_r);
 
 
 
@@ -201,8 +202,13 @@ void app_main(void)
     ESP_ERROR_CHECK(example_connect());
     mqtt_app_start();
 
+    int mqtt_msg_id;
+
     while (true){
         ESP_LOGI(TAG, "Main loop...");
+        opener_open(&opener_config);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        opener_close(&opener_config);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
