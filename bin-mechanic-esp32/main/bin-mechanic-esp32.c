@@ -27,6 +27,41 @@
 
 
 
+/*
+ * Define for SmartBin
+ *
+ */
+#define USE_SIMULATED_BUTTON 1
+
+#define BINSTATE_IDLE       0
+#define BINSTATE_YOLO       1
+#define BINSTATE_SORTCTRL   2
+#define TIMEOUT_SEC_YOLO    10
+#define YOLO_OBJCLASS_COLDCUP   1
+#define YOLO_OBJCLASS_HOTCUP    2
+#define YOLO_OBJCLASS_OTHER     3
+#define SERVO_ANGLE_L_COLDCUP   -60
+#define SERVO_ANGLE_R_COLDCUP   -60
+#define SERVO_ANGLE_L_HOTCUP    60
+#define SERVO_ANGLE_R_HOTCUP    60
+#define SERVO_ANGLE_L_OTHER     0
+#define SERVO_ANGLE_R_OTHER     0
+#define SERVO_ANGLE_L_IDLE      0
+#define SERVO_ANGLE_R_IDLE      0
+
+typedef struct{
+    int binState;
+    int objDetected;
+    int yoloReady;
+    int objClass;
+
+}smartbin_t;
+
+int isObjectPresent(smartbin_t *bin);
+int isYoloReady(smartbin_t *bin);
+
+
+
 static const char *TAG = "SYSTEM_LOG";
 static void log_error_if_nonzero(const char *message, int error_code)
 {
@@ -165,19 +200,33 @@ void app_main(void)
      */
     sort_servo_config_t servo_l;
     sort_servo_config_t servo_r;
-    servo_l.gpio_servo = 2;
-    servo_r.gpio_servo = 4;
-    //sort_servo_init(&servo_l);
-    //sort_servo_init(&servo_r);
-    //sort_servo_enable(&servo_l);
-    //sort_servo_enable(&servo_r);
-
-    int angle_l = 0;
-    int angle_r = 0;
-    //sort_servo_set_angle(&servo_l, angle_l);
-    //sort_servo_set_angle(&servo_r, angle_r);
-
-
+    servo_l.gpio_servo = GPIO_NUM_18;
+    servo_r.gpio_servo = GPIO_NUM_19;
+    sort_servo_init(&servo_l);
+    sort_servo_init(&servo_r);
+    sort_servo_enable(&servo_l);
+    sort_servo_enable(&servo_r);
+    sort_servo_set_angle(&servo_l, SERVO_ANGLE_L_IDLE);
+    sort_servo_set_angle(&servo_r, SERVO_ANGLE_R_IDLE);
+    
+    /*
+     * For testing only : Button for simulation of Presense sensor and YOLO result
+     *
+     */
+#if USE_SIMULATED_BUTTON == 1
+#define SIM_BTN_PRESENSE_SENSOR  (12)
+#define SIM_BTN_YOLO_READY       (13)
+#define SIM_BTN_HOTCUP           (14)
+#define SIM_BTN_COLDCUP          (27)
+    ESP_LOGI(TAG, "Simulation is used...");
+    gpio_config_t io_conf = {};
+    io_conf.intr_type = GPIO_INTR_ANYEDGE;
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pin_bit_mask = (1ULL << SIM_BTN_PRESENSE_SENSOR) | (1ULL << SIM_BTN_YOLO_READY) | (1ULL << SIM_BTN_COLDCUP) | (1ULL << SIM_BTN_HOTCUP);
+    io_conf.pull_down_en = 0;
+    io_conf.pull_up_en = 1;
+    gpio_config(&io_conf);
+#endif
 
     ESP_LOGI(TAG, "[APP] Startup..");
     ESP_LOGI(TAG, "[APP] Free memory: %d bytes", esp_get_free_heap_size());
@@ -199,16 +248,113 @@ void app_main(void)
      * Read "Establishing Wi-Fi or Ethernet Connection" section in
      * examples/protocols/README.md for more information about this function.
      */
-    ESP_ERROR_CHECK(example_connect());
-    mqtt_app_start();
-
-    int mqtt_msg_id;
+    //ESP_ERROR_CHECK(example_connect());
+    //mqtt_app_start();
+    smartbin_t smartbin;
+    smartbin.binState = BINSTATE_IDLE;
 
     while (true){
-        ESP_LOGI(TAG, "Main loop...");
-        opener_open(&opener_config);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-        opener_close(&opener_config);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        switch (smartbin.binState){
+            case BINSTATE_IDLE:
+                ESP_LOGI(TAG, "IDLE STATE");
+                if (isObjectPresent(&smartbin)){
+                    smartbin.binState = BINSTATE_YOLO;
+                    ESP_LOGI(TAG, "GO TO YOLO STATE");
+                }
+                break;
+
+            case BINSTATE_YOLO:
+                ESP_LOGI(TAG, "YOLO STATE");
+                // Publish MQTT Request for YOLO service
+                //
+                // Wait the result
+                int timeout_yolo;
+                timeout_yolo = TIMEOUT_SEC_YOLO;
+                ESP_LOGI(TAG, "Wait for YOLO");
+                while (!isYoloReady(&smartbin)){
+                    vTaskDelay(1000 / portTICK_PERIOD_MS);
+                    timeout_yolo--;
+                    if (timeout_yolo <= 0){
+                        smartbin.binState = BINSTATE_IDLE;
+                        ESP_LOGI(TAG, "Timeout, GO TO IDLE");
+                        break;
+                    }
+                }
+                smartbin.binState = BINSTATE_SORTCTRL;
+                break;
+
+            case BINSTATE_SORTCTRL:
+                ESP_LOGI(TAG, "SORT STATE");
+                // Read YOLO result
+                //
+                // Select servo angle coresponds to YOLO's result
+                int angle_l, angle_r;
+                if (smartbin.objClass == YOLO_OBJCLASS_COLDCUP){
+                    angle_l = SERVO_ANGLE_L_COLDCUP;
+                    angle_r = SERVO_ANGLE_R_COLDCUP;
+                }
+                else if (smartbin.objClass == YOLO_OBJCLASS_HOTCUP){
+                    angle_l = SERVO_ANGLE_L_HOTCUP;
+                    angle_r = SERVO_ANGLE_R_HOTCUP;
+                }
+                else if (smartbin.objClass == YOLO_OBJCLASS_OTHER){
+                    angle_l = SERVO_ANGLE_L_OTHER;
+                    angle_r = SERVO_ANGLE_R_OTHER;
+                }
+                else{
+                    smartbin.binState = BINSTATE_IDLE;
+                    ESP_LOGI(TAG, "GO TO IDLE");
+                    break;
+                }
+                sort_servo_set_angle(&servo_l, angle_l);
+                sort_servo_set_angle(&servo_r, angle_r);
+                vTaskDelay(2000 / portTICK_PERIOD_MS);
+
+                // Open Lid, Let object fall into bin
+                opener_open(&opener_config);
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
+                opener_close(&opener_config);
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
+                smartbin.binState = BINSTATE_IDLE;
+                sort_servo_set_angle(&servo_l, SERVO_ANGLE_L_IDLE);
+                sort_servo_set_angle(&servo_r, SERVO_ANGLE_R_IDLE);
+                break;
+        }
+
+        vTaskDelay(200 / portTICK_PERIOD_MS);
     }
+}
+
+
+
+/*
+ * All SmartBin functions
+ *
+ */
+int isObjectPresent(smartbin_t *bin){
+#if USE_SIMULATED_BUTTON == 1
+    if(!gpio_get_level(SIM_BTN_PRESENSE_SENSOR)){
+        ESP_LOGI(TAG, "Presense!");
+        return 1;
+    }
+    return 0;
+#endif
+}
+
+int isYoloReady(smartbin_t *bin){
+#if USE_SIMULATED_BUTTON == 1
+    if(!gpio_get_level(SIM_BTN_YOLO_READY)){
+        bin->yoloReady = 1;
+        if(!gpio_get_level(SIM_BTN_COLDCUP)){
+            bin->objClass = YOLO_OBJCLASS_COLDCUP;
+            ESP_LOGI(TAG, "YOLO Ready!, Class=ColdCup");
+        }
+        else if(!gpio_get_level(SIM_BTN_HOTCUP)){
+            bin->objClass = YOLO_OBJCLASS_HOTCUP;
+            ESP_LOGI(TAG, "YOLO Ready!, Class=HotCup");
+        }
+        return 1;
+    }
+    return 0;
+#endif
 }
