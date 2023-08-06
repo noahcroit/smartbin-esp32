@@ -51,14 +51,15 @@ int opener_init(opener_config_t *config){
     io_conf.pull_up_en = 0;
     gpio_config(&io_conf);
 
-    //GPIO config for limit switch
+    // GPIO config for limit switch
     io_conf.intr_type = GPIO_INTR_ANYEDGE;
     io_conf.mode = GPIO_MODE_INPUT;
     io_conf.pin_bit_mask = (1ULL << (config->sw_fullclose)) | (1ULL << (config->sw_fullopen));
     io_conf.pull_down_en = 0;
     io_conf.pull_up_en = 1;
     gpio_config(&io_conf);
-    
+   
+    // PWM config with LEDC module for lid speed control
     opener_ledc_init(config);
 
     return 0;
