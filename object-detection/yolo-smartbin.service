@@ -1,0 +1,13 @@
+[Unit]
+Description=YOLOv4 Worker for smartbin
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/yolo-smartbin.sh
+Environment="PYTHONPATH=$PYTHONPATH:/home/watergate/.local/lib/python3.9/site-packages"
+WatchdogSec=120
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
