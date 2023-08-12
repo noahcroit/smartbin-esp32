@@ -31,15 +31,20 @@
  * Define for SmartBin
  *
  */
-#define USE_SIMULATED_BUTTON 1
+#define USE_SIMULATED_PRESENSE_BUTTON 1
+#define USE_SIMULATED_YOLO_BUTTON     0 
 
-#define BINSTATE_IDLE       0
-#define BINSTATE_YOLO       1
-#define BINSTATE_SORTCTRL   2
-#define TIMEOUT_SEC_YOLO    10
-#define YOLO_OBJCLASS_COLDCUP   1
-#define YOLO_OBJCLASS_HOTCUP    2
-#define YOLO_OBJCLASS_OTHER     3
+#define BINSTATE_IDLE           0
+#define BINSTATE_YOLO           1
+#define BINSTATE_SORTCTRL       2
+#define TIMEOUT_SEC_YOLO        10
+#define YOLO_OBJCLASS_COLDCUP   'C'
+#define YOLO_OBJCLASS_HOTCUP    'H'
+#define YOLO_OBJCLASS_OTHER     'O'
+#define MQTT_DISCONNECTED       0
+#define MQTT_CONNECTED          1
+#define MQTT_TOPIC_YOLOREQUEST  "YOLO/Request?"
+#define MQTT_TOPIC_YOLORESULT   "YOLO/Result"
 #define SERVO_ANGLE_L_COLDCUP   -60
 #define SERVO_ANGLE_R_COLDCUP   -60
 #define SERVO_ANGLE_L_HOTCUP    60
@@ -50,15 +55,25 @@
 #define SERVO_ANGLE_R_IDLE      0
 
 typedef struct{
-    int binState;
-    int objDetected;
-    int yoloReady;
-    int objClass;
-
+    int8_t binState;
+    int8_t mqttConnected; 
+    int8_t yoloReady;
+    char objClass;
 }smartbin_t;
 
 int isObjectPresent(smartbin_t *bin);
 int isYoloReady(smartbin_t *bin);
+
+/* 
+ * Global Var for smartbin
+ *
+ */
+smartbin_t smartbin;
+esp_mqtt_client_handle_t client = NULL;
+char buf_yolo_request[10];
+char buf_yolo_result[10];
+QueueHandle_t queue_yolo_request;
+QueueHandle_t queue_yolo_result;
 
 
 
@@ -89,6 +104,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
+        smartbin.mqttConnected = MQTT_CONNECTED;
+
         //msg_id = esp_mqtt_client_publish(client, "/topic/qos1", "data_3", 0, 1, 0);
         //ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
 
@@ -104,28 +121,35 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         /* Subscribe of every tags should be here, after connection is success
          *
          */
-        msg_id = esp_mqtt_client_subscribe(client, "/topic/qos0", 0);
+        msg_id = esp_mqtt_client_subscribe(client, MQTT_TOPIC_YOLORESULT, 0);
         ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
-
         break;
+
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
+        smartbin.mqttConnected = MQTT_DISCONNECTED;
         break;
 
     case MQTT_EVENT_SUBSCRIBED:
         ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
         break;
+
     case MQTT_EVENT_UNSUBSCRIBED:
         ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id);
         break;
+
     case MQTT_EVENT_PUBLISHED:
         ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
         break;
+
     case MQTT_EVENT_DATA:
         ESP_LOGI(TAG, "MQTT_EVENT_DATA");
         printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
         printf("DATA=%.*s\r\n", event->data_len, event->data);
+        xQueueSend(queue_yolo_result, (void*)event->data, (TickType_t)0);
+        smartbin.yoloReady = 1;
         break;
+
     case MQTT_EVENT_ERROR:
         ESP_LOGI(TAG, "MQTT_EVENT_ERROR");
         if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
@@ -135,6 +159,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             ESP_LOGI(TAG, "Last errno string (%s)", strerror(event->error_handle->esp_transport_sock_errno));
         }
         break;
+
     default:
         ESP_LOGI(TAG, "Other event id:%d", event->event_id);
         break;
@@ -171,7 +196,7 @@ static void mqtt_app_start(void)
     }
 #endif /* CONFIG_BROKER_URL_FROM_STDIN */
 
-    esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
+    client = esp_mqtt_client_init(&mqtt_cfg);
     /* The last argument may be used to pass data to the event handler, in this example mqtt_event_handler */
     esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
     esp_mqtt_client_start(client);
@@ -179,8 +204,15 @@ static void mqtt_app_start(void)
 
 
 
-void app_main(void)
-{
+void task_binstatemachine(){
+    
+    /*
+     * Initialize Smartbin Params
+     *
+     */
+    smartbin.binState = BINSTATE_IDLE;
+    smartbin.yoloReady = 0;
+
     /*
      * Lid Opener Configuration
      *
@@ -213,16 +245,13 @@ void app_main(void)
      * For testing only : Button for simulation of Presense sensor and YOLO result
      *
      */
-#if USE_SIMULATED_BUTTON == 1
-#define SIM_BTN_PRESENSE_SENSOR  (12)
-#define SIM_BTN_YOLO_READY       (13)
-#define SIM_BTN_HOTCUP           (14)
-#define SIM_BTN_COLDCUP          (27)
+#if USE_SIMULATED_PRESENSE_BUTTON == 1
+#define SIM_BTN_PRESENSE_SENSOR  (15)
     ESP_LOGI(TAG, "Simulation is used...");
     gpio_config_t io_conf = {};
     io_conf.intr_type = GPIO_INTR_ANYEDGE;
     io_conf.mode = GPIO_MODE_INPUT;
-    io_conf.pin_bit_mask = (1ULL << SIM_BTN_PRESENSE_SENSOR) | (1ULL << SIM_BTN_YOLO_READY) | (1ULL << SIM_BTN_COLDCUP) | (1ULL << SIM_BTN_HOTCUP);
+    io_conf.pin_bit_mask = (1ULL << SIM_BTN_PRESENSE_SENSOR);
     io_conf.pull_down_en = 0;
     io_conf.pull_up_en = 1;
     gpio_config(&io_conf);
@@ -244,15 +273,6 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    /* This helper function configures Wi-Fi or Ethernet, as selected in menuconfig.
-     * Read "Establishing Wi-Fi or Ethernet Connection" section in
-     * examples/protocols/README.md for more information about this function.
-     */
-    //ESP_ERROR_CHECK(example_connect());
-    //mqtt_app_start();
-    smartbin_t smartbin;
-    smartbin.binState = BINSTATE_IDLE;
-
     while (true){
         switch (smartbin.binState){
             case BINSTATE_IDLE:
@@ -270,7 +290,8 @@ void app_main(void)
                 // Wait the result
                 int timeout_yolo;
                 timeout_yolo = TIMEOUT_SEC_YOLO;
-                ESP_LOGI(TAG, "Wait for YOLO");
+                xQueueSend(queue_yolo_request, (void*)"Y", (TickType_t)0);
+                ESP_LOGI(TAG, "Publish YOLO request, Wait for YOLO...");
                 while (!isYoloReady(&smartbin)){
                     vTaskDelay(1000 / portTICK_PERIOD_MS);
                     timeout_yolo--;
@@ -288,22 +309,35 @@ void app_main(void)
                 // Read YOLO result
                 //
                 // Select servo angle coresponds to YOLO's result
+                char rxBuf;
+                if (queue_yolo_result != 0){
+                    xQueueReceive(queue_yolo_result, &(rxBuf), (TickType_t)10);
+                    ESP_LOGI(TAG, "load YOLO result in queue");
+                    smartbin.objClass = rxBuf;
+                }
+                else{
+                    ESP_LOGI(TAG, "No YOLO result in queue");
+                    break;
+                }
                 int angle_l, angle_r;
                 if (smartbin.objClass == YOLO_OBJCLASS_COLDCUP){
+                    ESP_LOGI(TAG, "Sort to COLDCUP slot");
                     angle_l = SERVO_ANGLE_L_COLDCUP;
                     angle_r = SERVO_ANGLE_R_COLDCUP;
                 }
                 else if (smartbin.objClass == YOLO_OBJCLASS_HOTCUP){
+                    ESP_LOGI(TAG, "Sort to HOTCUP slot");
                     angle_l = SERVO_ANGLE_L_HOTCUP;
                     angle_r = SERVO_ANGLE_R_HOTCUP;
                 }
                 else if (smartbin.objClass == YOLO_OBJCLASS_OTHER){
+                    ESP_LOGI(TAG, "Sort to OTHER slot");
                     angle_l = SERVO_ANGLE_L_OTHER;
                     angle_r = SERVO_ANGLE_R_OTHER;
                 }
                 else{
                     smartbin.binState = BINSTATE_IDLE;
-                    ESP_LOGI(TAG, "GO TO IDLE");
+                    ESP_LOGI(TAG, "Not any amazon product, GO TO IDLE");
                     break;
                 }
                 sort_servo_set_angle(&servo_l, angle_l);
@@ -325,6 +359,63 @@ void app_main(void)
     }
 }
 
+void task_mqtt_connection(){
+
+    smartbin.mqttConnected = MQTT_DISCONNECTED; 
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    /* This helper function configures Wi-Fi or Ethernet, as selected in menuconfig.
+     * Read "Establishing Wi-Fi or Ethernet Connection" section in
+     * examples/protocols/README.md for more information about this function.
+     */
+    
+    int msg_id;
+    char rxBuf='N';
+
+    while (true){
+        if (smartbin.mqttConnected == MQTT_DISCONNECTED){
+            ESP_ERROR_CHECK(example_connect());
+            mqtt_app_start();
+            smartbin.mqttConnected = MQTT_CONNECTED; 
+        }
+        else{
+            /*
+             * Checking Queue
+             *
+             */
+            if (queue_yolo_request != 0){
+                xQueueReceive(queue_yolo_request, &(rxBuf), (TickType_t)10);
+                if (rxBuf == 'Y'){
+                    msg_id = esp_mqtt_client_publish(client, MQTT_TOPIC_YOLOREQUEST, "Y", 0, 0, 0);
+                    ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
+                    rxBuf = 'N';
+                }
+            }
+        }
+
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+}
+
+void app_main(void)
+{
+    // create message queue for YOLO Request
+    queue_yolo_request = xQueueCreate(5, sizeof(buf_yolo_request));
+    queue_yolo_result = xQueueCreate(5, sizeof(buf_yolo_result));
+
+    // task handler
+    TaskHandle_t task_handler_1 = NULL;
+    TaskHandle_t task_handler_2 = NULL;
+
+    // create tasks
+    xTaskCreate(&task_mqtt_connection, "task mqtt check connection", 4096, NULL, 5, &task_handler_1);
+    xTaskCreate(&task_binstatemachine, "task smartbin", 4096, NULL, 5, &task_handler_2);
+
+    while (true){
+        // nothing is running in this
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+}
+
 
 
 /*
@@ -332,7 +423,7 @@ void app_main(void)
  *
  */
 int isObjectPresent(smartbin_t *bin){
-#if USE_SIMULATED_BUTTON == 1
+#if USE_SIMULATED_PRESENSE_BUTTON == 1
     if(!gpio_get_level(SIM_BTN_PRESENSE_SENSOR)){
         ESP_LOGI(TAG, "Presense!");
         return 1;
@@ -342,19 +433,18 @@ int isObjectPresent(smartbin_t *bin){
 }
 
 int isYoloReady(smartbin_t *bin){
-#if USE_SIMULATED_BUTTON == 1
-    if(!gpio_get_level(SIM_BTN_YOLO_READY)){
-        bin->yoloReady = 1;
-        if(!gpio_get_level(SIM_BTN_COLDCUP)){
-            bin->objClass = YOLO_OBJCLASS_COLDCUP;
-            ESP_LOGI(TAG, "YOLO Ready!, Class=ColdCup");
-        }
-        else if(!gpio_get_level(SIM_BTN_HOTCUP)){
-            bin->objClass = YOLO_OBJCLASS_HOTCUP;
-            ESP_LOGI(TAG, "YOLO Ready!, Class=HotCup");
-        }
+#if USE_SIMULATED_YOLO_BUTTON == 1
+#else
+    if (bin->yoloReady){
+        bin->yoloReady = 0;
         return 1;
     }
     return 0;
 #endif
 }
+
+/*
+ * Hardware Testing
+ *
+ */
+
