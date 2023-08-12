@@ -351,7 +351,13 @@ def task_write_to_redis(q_redis, tag_objclass):
                 #print("redis data sent")
 
                 # Publish MQTT
-                client.publish("YOLO/Result", "HOT")
+                print("MQTT, Publish class = {}".format(objclass))
+                if objclass == "coldcup":
+                    client.publish("YOLO/Result", "C")
+                elif objclass == "hotcup":
+                    client.publish("YOLO/Result", "H")
+                else:
+                    client.publish("YOLO/Result", "O")
 
             time.sleep(0.5)
 
