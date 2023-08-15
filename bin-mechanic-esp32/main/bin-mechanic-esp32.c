@@ -37,10 +37,11 @@
 #define BINSTATE_IDLE           0
 #define BINSTATE_YOLO           1
 #define BINSTATE_SORTCTRL       2
-#define TIMEOUT_SEC_YOLO        10
+#define TIMEOUT_SEC_YOLO        20
 #define YOLO_OBJCLASS_COLDCUP   'C'
 #define YOLO_OBJCLASS_HOTCUP    'H'
 #define YOLO_OBJCLASS_OTHER     'O'
+#define YOLO_OBJCLASS_NONE      0
 #define MQTT_DISCONNECTED       0
 #define MQTT_CONNECTED          1
 #define MQTT_TOPIC_YOLOREQUEST  "YOLO/Request?"
@@ -296,12 +297,16 @@ void task_binstatemachine(){
                     vTaskDelay(1000 / portTICK_PERIOD_MS);
                     timeout_yolo--;
                     if (timeout_yolo <= 0){
-                        smartbin.binState = BINSTATE_IDLE;
-                        ESP_LOGI(TAG, "Timeout, GO TO IDLE");
                         break;
                     }
                 }
-                smartbin.binState = BINSTATE_SORTCTRL;
+                if (timeout_yolo <= 0){
+                    smartbin.binState = BINSTATE_IDLE;
+                    ESP_LOGI(TAG, "Timeout, GO TO IDLE");
+                }
+                else{
+                    smartbin.binState = BINSTATE_SORTCTRL;
+                }
                 break;
 
             case BINSTATE_SORTCTRL:
@@ -317,6 +322,7 @@ void task_binstatemachine(){
                 }
                 else{
                     ESP_LOGI(TAG, "No YOLO result in queue");
+                    smartbin.objClass = YOLO_OBJCLASS_NONE;
                     break;
                 }
                 int angle_l, angle_r;
@@ -340,14 +346,17 @@ void task_binstatemachine(){
                     ESP_LOGI(TAG, "Not any amazon product, GO TO IDLE");
                     break;
                 }
+                ESP_LOGI(TAG, "Control Servo");
                 sort_servo_set_angle(&servo_l, angle_l);
                 sort_servo_set_angle(&servo_r, angle_r);
                 vTaskDelay(2000 / portTICK_PERIOD_MS);
 
                 // Open Lid, Let object fall into bin
+                ESP_LOGI(TAG, "Opening");
                 opener_open(&opener_config);
                 vTaskDelay(1000 / portTICK_PERIOD_MS);
                 opener_close(&opener_config);
+                ESP_LOGI(TAG, "Closing");
                 vTaskDelay(1000 / portTICK_PERIOD_MS);
                 smartbin.binState = BINSTATE_IDLE;
                 sort_servo_set_angle(&servo_l, SERVO_ANGLE_L_IDLE);
