@@ -5,7 +5,7 @@
 #ifndef LID_OPENER_H
 #define LID_OPENER_H
 
-#define LID_OPENER_NON_BLOCK 1
+#define LID_OPENER_NON_BLOCK 0
 
 #include <stdio.h>
 #include <stdlib.h>
