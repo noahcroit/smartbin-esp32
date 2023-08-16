@@ -46,10 +46,10 @@
 #define MQTT_CONNECTED          1
 #define MQTT_TOPIC_YOLOREQUEST  "YOLO/Request?"
 #define MQTT_TOPIC_YOLORESULT   "YOLO/Result"
-#define SERVO_ANGLE_L_COLDCUP   -60
-#define SERVO_ANGLE_R_COLDCUP   -60
-#define SERVO_ANGLE_L_HOTCUP    60
-#define SERVO_ANGLE_R_HOTCUP    60
+#define SERVO_ANGLE_L_COLDCUP   -30
+#define SERVO_ANGLE_R_COLDCUP   -30
+#define SERVO_ANGLE_L_HOTCUP    40
+#define SERVO_ANGLE_R_HOTCUP    40
 #define SERVO_ANGLE_L_OTHER     0
 #define SERVO_ANGLE_R_OTHER     0
 #define SERVO_ANGLE_L_IDLE      0
@@ -302,6 +302,7 @@ void task_binstatemachine(){
                 }
                 if (timeout_yolo <= 0){
                     smartbin.binState = BINSTATE_IDLE;
+                    xQueueReset(queue_yolo_result);
                     ESP_LOGI(TAG, "Timeout, GO TO IDLE");
                 }
                 else{
