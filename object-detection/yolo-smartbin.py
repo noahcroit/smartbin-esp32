@@ -35,7 +35,7 @@ def on_message(client, userdata, msg):
     else:
         print("Topic is not in the list of smartbin")
 
-def task_mqttsub():
+def task_mqttsub(q_yolo_esp32):
     global worker_isrun
     global snapshot_isrun
 
@@ -45,10 +45,24 @@ def task_mqttsub():
     client.on_connect=on_connect
     client.on_message=on_message
     client.connect(broker, port, 60)
+    print("Run MQTT sub")
     client.subscribe("YOLO/Request?")
+    client.loop_start()
+
     while worker_isrun:
-        print("Run MQTT sub")
-        client.loop_forever()
+        # Publish MQTT
+        if not q_yolo_esp32.empty():
+            objclass = q_yolo_esp32.get()
+
+            print("MQTT, Publish class = {}".format(objclass))
+            if objclass == "coldcup":
+                client.publish("YOLO/Result", "C")
+            elif objclass == "hotcup":
+                client.publish("YOLO/Result", "H")
+            else:
+                client.publish("YOLO/Result", "O")
+        time.sleep(1)
+    client.loop_stop()
 
 
 
@@ -143,7 +157,7 @@ def task_overlay(queue_roi, displayflag):
 
     cv2.destroyAllWindows()
 
-def task_find_roi(queue_in, q_to_overlay, q_to_redis, coeff):
+def task_find_roi(queue_in, q_to_overlay, q_to_redis, q_to_esp32, coeff):
     global snapshot_isrun
 
     time.sleep(1)
@@ -297,6 +311,7 @@ def task_find_roi(queue_in, q_to_overlay, q_to_redis, coeff):
                             objclass = occurence_count.most_common(1)[0][0]
                             print("detected object is ", objclass)
                             q_to_redis.put(objclass)
+                            q_to_esp32.put(objclass)
                             detected_obj = []
                             detected_count=0
                             snapshot_isrun = False
@@ -323,18 +338,11 @@ def task_find_roi(queue_in, q_to_overlay, q_to_redis, coeff):
             print("something wrong in task YOLO")
             print(e)
 
-def task_write_to_redis(q_redis, tag_objclass):
+def task_write_tag(q_redis, tag_objclass):
     global snapshot_isrun
 
     # REDIS client
     r = redis.Redis(host='127.0.0.1', port=6379)
-
-    # MQTT Client
-    mqtt_broker="127.0.0.1"
-    mqtt_port=1883
-    client = mqtt.Client()
-    client.on_connect=on_connect
-    client.connect(mqtt_broker, mqtt_port, 60)
 
     # looping
     time.sleep(2)
@@ -347,24 +355,44 @@ def task_write_to_redis(q_redis, tag_objclass):
                 lock.release()
 
                 # Set REDIS tags
+                print("redis data sent")
                 r.publish(tag_objclass, objclass)
-                #print("redis data sent")
 
-                # Publish MQTT
-                print("MQTT, Publish class = {}".format(objclass))
-                if objclass == "coldcup":
-                    client.publish("YOLO/Result", "C")
-                elif objclass == "hotcup":
-                    client.publish("YOLO/Result", "H")
-                else:
-                    client.publish("YOLO/Result", "O")
-
-            time.sleep(0.5)
+                time.sleep(0.5)
 
         except Exception as e:
             print("something wrong in task REDIS")
             print(e)
 
+def task_facelogin():
+
+    # REDIS client
+    r = redis.Redis(host='127.0.0.1', port=6379)
+    p = r.pubsub()
+    p.subscribe("smartbin.login")
+    time.sleep(1)
+
+    while worker_isrun:
+        message = p.get_message()
+        if message:
+            print(message)
+            print("activate face login")
+
+            lock.acquire()
+            # Call face login function in here
+            #
+            user = facelogin()
+            if user != None:
+                # login success
+                # load JSON file of detected user
+                print("Load user JSON file")
+            time.sleep(1)
+            lock.release()
+
+        time.sleep(0.5)
+
+def facelogin():
+    return None
 
 
 if __name__ == "__main__":
@@ -387,6 +415,7 @@ if __name__ == "__main__":
     if args.source == "video":
         source = data['video']
     tag_objclass = data['tag_objclass']
+    tag_userinfo = data['tag_userinfo']
     f.close()
 
 
@@ -415,13 +444,15 @@ if __name__ == "__main__":
     queue_snapshot = queue.Queue()
     queue_roi = queue.Queue()
     queue_redis = queue.Queue()
+    queue_yolo_esp32 = queue.Queue()
 
     # config tasks
     t1 = threading.Thread(target=task_snapshot, args=(queue_snapshot, source, args.source))
-    t2 = threading.Thread(target=task_find_roi, args=(queue_snapshot, queue_roi, queue_redis, data['coeff']))
+    t2 = threading.Thread(target=task_find_roi, args=(queue_snapshot, queue_roi, queue_redis, queue_yolo_esp32, data['coeff']))
     t3 = threading.Thread(target=task_overlay, args=(queue_roi, args.displayflag))
-    t4 = threading.Thread(target=task_write_to_redis, args=(queue_redis, tag_objclass))
-    t5 = threading.Thread(target=task_mqttsub)
+    t4 = threading.Thread(target=task_write_tag, args=(queue_redis, tag_objclass))
+    t5 = threading.Thread(target=task_mqttsub, args=(queue_yolo_esp32,))
+    t6 = threading.Thread(target=task_facelogin)
 
     # start tasks
     worker_isrun = True
@@ -430,18 +461,18 @@ if __name__ == "__main__":
     t3.start()
     t4.start()
     t5.start()
+    t6.start()
 
     # wait for all threads to finish
     while worker_isrun:
         try:
             if not t1.is_alive():
                 print("restart snapshot task")
-                time.sleep(1)
                 t1 = threading.Thread(target=task_snapshot, args=(queue_snapshot, source, args.source))
                 t1.start()
             if not t2.is_alive():
                 print("restart task find roi")
-                t2 = threading.Thread(target=task_find_roi, args=(queue_snapshot, queue_roi, queue_redis, data['coeff']))
+                t2 = threading.Thread(target=task_find_roi, args=(queue_snapshot, queue_roi, queue_redis, queue_yolo_esp32, data['coeff']))
                 t2.start()
             if not t3.is_alive():
                 print("restart task overlay")
@@ -449,14 +480,18 @@ if __name__ == "__main__":
                 t3.start()
             if not t4.is_alive():
                 print("restart task redis")
-                t4 = threading.Thread(target=task_write_to_redis, args=(queue_redis, tag_objclass))
+                t4 = threading.Thread(target=task_write_tag, args=(queue_redis, tag_objclass))
                 t4.start()
             if not t5.is_alive():
-                print("restart task redis")
-                t5 = threading.Thread(target=task_mqttsub)
+                print("restart task mqttsub")
+                t5 = threading.Thread(target=task_mqttsub, args=(queue_yolo_esp32,))
                 t5.start()
+            if not t6.is_alive():
+                print("restart task facelogin")
+                t6 = threading.Thread(target=task_facelogin)
+                t6.start()
 
-            time.sleep(1)
+            time.sleep(3)
 
         except KeyboardInterrupt:
             print("main thread interrupted. Stop worker")

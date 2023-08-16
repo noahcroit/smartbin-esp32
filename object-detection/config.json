@@ -2,5 +2,6 @@
 	"cam": "/dev/video2",
 	"video": "videos/smartbin-test.mp4",
 	"coeff": {"a1": 2.43, "a0": 0},
-	"tag_objclass": "objclass"
+	"tag_objclass": "smartbin.objclass",
+	"tag_userinfo": "smartbin.userinfo"
 }
