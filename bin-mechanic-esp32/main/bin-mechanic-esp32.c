@@ -241,6 +241,9 @@ void task_binstatemachine(){
     sort_servo_enable(&servo_r);
     sort_servo_set_angle(&servo_l, SERVO_ANGLE_L_IDLE);
     sort_servo_set_angle(&servo_r, SERVO_ANGLE_R_IDLE);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    sort_servo_disable(&servo_l);
+    sort_servo_disable(&servo_r);
     
     /*
      * For testing only : Button for simulation of Presense sensor and YOLO result
@@ -348,6 +351,9 @@ void task_binstatemachine(){
                     break;
                 }
                 ESP_LOGI(TAG, "Control Servo");
+                sort_servo_enable(&servo_l);
+                sort_servo_enable(&servo_r);
+                vTaskDelay(200 / portTICK_PERIOD_MS);
                 sort_servo_set_angle(&servo_l, angle_l);
                 sort_servo_set_angle(&servo_r, angle_r);
                 vTaskDelay(2000 / portTICK_PERIOD_MS);
@@ -362,6 +368,8 @@ void task_binstatemachine(){
                 smartbin.binState = BINSTATE_IDLE;
                 sort_servo_set_angle(&servo_l, SERVO_ANGLE_L_IDLE);
                 sort_servo_set_angle(&servo_r, SERVO_ANGLE_R_IDLE);
+                sort_servo_disable(&servo_l);
+                sort_servo_disable(&servo_r);
                 break;
         }
 
