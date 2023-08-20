@@ -21,6 +21,11 @@ Use OpenCV-python, Run on Ubuntu server. To run this
 cd object-detection
 python yolo-smartbin.py -s cam -j config.json -d true
 ```
+Testing camera with ffmpeg or cheese
+```
+ffmpeg -f v4l2 -framerate 30 -video_size 1280x720 -input_format mjpeg -i /dev/video2 out.mkv
+```
+
 
 
 
