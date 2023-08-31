@@ -93,8 +93,9 @@ def task_snapshot(queue_snapshot, source, source_type):
                 stream.release()
                 snapshot_isrun = False
             snapshot_isrun = False
-
         time.sleep(1)
+
+
 
 def task_overlay(queue_roi, displayflag):
     global snapshot_isrun
@@ -149,13 +150,13 @@ def task_overlay(queue_roi, displayflag):
                     # global frame for yolo debug
                     frame_yolo = frame
 
-            time.sleep(0.1)
-
         except Exception as e:
             print("something is wrong in task overlay")
             print(e)
-
+        time.sleep(0.1)
     cv2.destroyAllWindows()
+
+
 
 def task_find_roi(queue_in, q_to_overlay, q_to_redis, q_to_esp32, coeff):
     global snapshot_isrun
@@ -332,14 +333,17 @@ def task_find_roi(queue_in, q_to_overlay, q_to_redis, q_to_esp32, coeff):
 
             else:
                 print("frame=None")
-            time.sleep(0.1)
 
         except Exception as e:
             print("something wrong in task YOLO")
             print(e)
+        time.sleep(0.1)
 
-def task_write_tag(q_redis, tag_objclass):
+
+
+def task_update_userdetail(q_redis, tag_objclass, tag_userdetail):
     global snapshot_isrun
+    global userdetail
 
     # REDIS client
     r = redis.Redis(host='127.0.0.1', port=6379)
@@ -349,22 +353,33 @@ def task_write_tag(q_redis, tag_objclass):
     while worker_isrun:
         try:
             if not q_redis.empty():
-                # Read dict and select only the first staffgauge detection
                 lock.acquire()
                 objclass = q_redis.get()
                 lock.release()
 
-                # Set REDIS tags
-                print("redis data sent")
-                r.publish(tag_objclass, objclass)
+                # Update user pts from the objclass result
+                if not userdetail == None:
+                    reward = calcReward(objclass)
+                    print("reward=", reward)
+                    userdetail["total_pts"] += reward
+                    userdetail[objclass] += 1
+                    #save_json_userdetail(userdetail)
 
-                time.sleep(0.5)
+                # Set REDIS tags
+                #print("objclass redis sent")
+                #r.publish(tag_objclass, objclass)
+                #print("updated userdetail redis sent")
+                #r.publish(tag_userdetail, str(userdetail))
 
         except Exception as e:
             print("something wrong in task REDIS")
             print(e)
+        time.sleep(1)
+
+
 
 def task_facelogin():
+    global userdetail
 
     # REDIS client
     r = redis.Redis(host='127.0.0.1', port=6379)
@@ -374,25 +389,82 @@ def task_facelogin():
 
     while worker_isrun:
         message = p.get_message()
-        if message:
-            print(message)
-            print("activate face login")
+        if not message == None:
+            print("msg:", message)
+            if message['data'] == b'1':
+                print("activate face login")
+                lock.acquire()
+                # Call face login function in here
+                #
+                username = facelogin()
+                if username != None:
+                    # login success
+                    # load JSON file of detected user
+                    print("Load user JSON file")
+                    userdetail = load_json_userdetail(username)
+                    print("userdetail=", userdetail)
 
-            lock.acquire()
-            # Call face login function in here
-            #
-            user = facelogin()
-            if user != None:
-                # login success
-                # load JSON file of detected user
-                print("Load user JSON file")
-            time.sleep(1)
-            lock.release()
-
+                time.sleep(1)
+                lock.release()
         time.sleep(0.5)
 
+
+
 def facelogin():
-    return None
+    return "test user"
+
+def calcReward(objclass):
+    pts=0
+    if objclass == "coldcup":
+        pts = 1
+    elif objclass == "hotcup":
+        pts = 1
+    elif objclass == "drinkwater":
+        pts = 1
+    return pts
+
+def load_json_userdetail(name):
+    # This shouldn't be written like this.
+    # Only for simulate the login process.
+    # It should be rewriten with username searhing technique on database file (txt, csv, json etc.)
+    filename = None
+    if name == "test user":
+        filename = "user.json"
+
+    if not name == None:
+        f = open(filename)
+        data = json.load(f)
+        username = data['name']
+        pts = data['total_pts']
+        cold = data['coldcup']
+        hot = data['hotcup']
+        other = data['other']
+        f.close()
+
+        user_dict = {
+                "name":username,
+                "total_pts":pts,
+                "coldcup":cold,
+                "hotcup":hot,
+                "other":other
+                }
+        return user_dict
+    else:
+        return None
+
+def save_json_userdetail(user_dict):
+    # This shouldn't be written like this.
+    # Only for simulate the login process.
+    # It should be rewriten with username searhing technique on database file (txt, csv, json etc.)
+    filename = None
+    if user_dict['name'] == "test user":
+        filename = "user.json"
+
+    if not filename == None:
+        f = open(filename, 'w')
+        json.dump(user_dict, f)
+        f.close()
+
 
 
 if __name__ == "__main__":
@@ -415,7 +487,7 @@ if __name__ == "__main__":
     if args.source == "video":
         source = data['video']
     tag_objclass = data['tag_objclass']
-    tag_userinfo = data['tag_userinfo']
+    tag_userdetail = data['tag_userdetail']
     f.close()
 
 
@@ -446,11 +518,13 @@ if __name__ == "__main__":
     queue_redis = queue.Queue()
     queue_yolo_esp32 = queue.Queue()
 
+    userdetail = None
+
     # config tasks
     t1 = threading.Thread(target=task_snapshot, args=(queue_snapshot, source, args.source))
     t2 = threading.Thread(target=task_find_roi, args=(queue_snapshot, queue_roi, queue_redis, queue_yolo_esp32, data['coeff']))
     t3 = threading.Thread(target=task_overlay, args=(queue_roi, args.displayflag))
-    t4 = threading.Thread(target=task_write_tag, args=(queue_redis, tag_objclass))
+    t4 = threading.Thread(target=task_update_userdetail, args=(queue_redis, tag_objclass, tag_userdetail))
     t5 = threading.Thread(target=task_mqttsub, args=(queue_yolo_esp32,))
     t6 = threading.Thread(target=task_facelogin)
 
@@ -480,7 +554,7 @@ if __name__ == "__main__":
                 t3.start()
             if not t4.is_alive():
                 print("restart task redis")
-                t4 = threading.Thread(target=task_write_tag, args=(queue_redis, tag_objclass))
+                t4 = threading.Thread(target=task_update_userdetail, args=(queue_redis, tag_objclass))
                 t4.start()
             if not t5.is_alive():
                 print("restart task mqttsub")
