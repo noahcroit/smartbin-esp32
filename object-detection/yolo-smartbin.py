@@ -363,13 +363,16 @@ def task_update_userdetail(q_redis, tag_objclass, tag_userdetail):
                     print("reward=", reward)
                     userdetail["total_pts"] += reward
                     userdetail[objclass] += 1
-                    #save_json_userdetail(userdetail)
+                    save_json_userdetail(userdetail)
 
                 # Set REDIS tags
-                #print("objclass redis sent")
-                #r.publish(tag_objclass, objclass)
-                #print("updated userdetail redis sent")
-                #r.publish(tag_userdetail, str(userdetail))
+                print("objclass redis sent")
+                objclass_msg = {"detected_item":objclass, "reward":reward}
+                json_obj = json.dumps(objclass_msg, indent=4)
+                r.publish(tag_objclass, json_obj)
+                print("updated userdetail redis sent")
+                json_obj = json.dumps(userdetail, indent=4)
+                r.publish(tag_userdetail, json_obj)
 
         except Exception as e:
             print("something wrong in task REDIS")
@@ -378,13 +381,13 @@ def task_update_userdetail(q_redis, tag_objclass, tag_userdetail):
 
 
 
-def task_facelogin():
+def task_facelogin(tag_login, tag_userdetail):
     global userdetail
 
     # REDIS client
     r = redis.Redis(host='127.0.0.1', port=6379)
     p = r.pubsub()
-    p.subscribe("smartbin.login")
+    p.subscribe(tag_login)
     time.sleep(1)
 
     while worker_isrun:
@@ -403,6 +406,8 @@ def task_facelogin():
                     print("Load user JSON file")
                     userdetail = load_json_userdetail(username)
                     print("userdetail=", userdetail)
+                    json_obj = json.dumps(userdetail, indent=4)
+                    r.publish(tag_userdetail, json_obj)
 
                 time.sleep(1)
                 lock.release()
@@ -488,6 +493,7 @@ if __name__ == "__main__":
         source = data['video']
     tag_objclass = data['tag_objclass']
     tag_userdetail = data['tag_userdetail']
+    tag_login = data['tag_login']
     f.close()
 
 
@@ -526,7 +532,7 @@ if __name__ == "__main__":
     t3 = threading.Thread(target=task_overlay, args=(queue_roi, args.displayflag))
     t4 = threading.Thread(target=task_update_userdetail, args=(queue_redis, tag_objclass, tag_userdetail))
     t5 = threading.Thread(target=task_mqttsub, args=(queue_yolo_esp32,))
-    t6 = threading.Thread(target=task_facelogin)
+    t6 = threading.Thread(target=task_facelogin, args=(tag_login, tag_userdetail))
 
     # start tasks
     worker_isrun = True
@@ -562,7 +568,7 @@ if __name__ == "__main__":
                 t5.start()
             if not t6.is_alive():
                 print("restart task facelogin")
-                t6 = threading.Thread(target=task_facelogin)
+                t6 = threading.Thread(target=task_facelogin, args=(tag_login, tag_userdetail))
                 t6.start()
 
             time.sleep(3)
