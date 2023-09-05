@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+#include "driver/i2c.h"
 
 #include "esp_wifi.h"
 #include "esp_system.h"
@@ -24,14 +25,13 @@
 
 #include "lid_opener.h"
 #include "sort_servo.h"
-
-
+#include "vl53l0x.h"
 
 /*
  * Define for SmartBin
  *
  */
-#define USE_SIMULATED_PRESENSE_BUTTON 1
+#define USE_SIMULATED_PRESENSE_BUTTON 0
 #define USE_SIMULATED_YOLO_BUTTON     0 
 
 #define BINSTATE_IDLE           0
@@ -54,6 +54,13 @@
 #define SERVO_ANGLE_R_OTHER     0
 #define SERVO_ANGLE_L_IDLE      0
 #define SERVO_ANGLE_R_IDLE      0
+#define ACTIVATE_DISTANCE_MM    150
+#define DISTANCE_SENSOR_I2C_PORT    I2C_NUM_0  
+#define DISTANCE_SENSOR_I2C_PIN_SCL GPIO_NUM_22  
+#define DISTANCE_SENSOR_I2C_PIN_SDA GPIO_NUM_21  
+#define DISTANCE_SENSOR_I2C_ADDRESS 0x29  
+#define DISTANCE_SENSOR_XSHUT       -1  
+#define DISTANCE_SENSOR_2V8         0  
 
 typedef struct{
     int8_t binState;
@@ -75,6 +82,7 @@ char buf_yolo_request[10];
 char buf_yolo_result[10];
 QueueHandle_t queue_yolo_request;
 QueueHandle_t queue_yolo_result;
+uint16_t distance_mm=1000;
 
 
 
@@ -205,6 +213,33 @@ static void mqtt_app_start(void)
 
 
 
+void task_readObjectDistance(){
+    ESP_LOGI(TAG, "VL53L0X Configuration ***");
+    vl53l0x_t *v_sensor;
+    v_sensor = vl53l0x_config(DISTANCE_SENSOR_I2C_PORT, 
+                              DISTANCE_SENSOR_I2C_PIN_SCL,
+                              DISTANCE_SENSOR_I2C_PIN_SDA,
+                              DISTANCE_SENSOR_XSHUT, 
+                              DISTANCE_SENSOR_I2C_ADDRESS,
+                              DISTANCE_SENSOR_2V8);
+    if(v_sensor == NULL){
+        ESP_LOGI(TAG, "Cannot see I2C device");
+    }
+    else{
+        ESP_LOGI(TAG, "VL53L0X Config OK!");
+        vl53l0x_init (v_sensor);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        vl53l0x_startContinuous(v_sensor, 1000);
+    }
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+    while (true){
+        distance_mm = vl53l0x_readRangeContinuousMillimeters(v_sensor);
+        ESP_LOGI(TAG, "object distance=%d", distance_mm);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+}
+
 void task_binstatemachine(){
     
     /*
@@ -241,7 +276,7 @@ void task_binstatemachine(){
     sort_servo_enable(&servo_r);
     sort_servo_set_angle(&servo_l, SERVO_ANGLE_L_IDLE);
     sort_servo_set_angle(&servo_r, SERVO_ANGLE_R_IDLE);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    //vTaskDelay(1000 / portTICK_PERIOD_MS);
     sort_servo_disable(&servo_l);
     sort_servo_disable(&servo_r);
     
@@ -423,14 +458,16 @@ void app_main(void)
     // task handler
     TaskHandle_t task_handler_1 = NULL;
     TaskHandle_t task_handler_2 = NULL;
+    TaskHandle_t task_handler_3 = NULL;
 
     // create tasks
+    xTaskCreate(&task_readObjectDistance, "task object detection sensor", 4096, NULL, 5, &task_handler_3);
     xTaskCreate(&task_mqtt_connection, "task mqtt check connection", 4096, NULL, 5, &task_handler_1);
     xTaskCreate(&task_binstatemachine, "task smartbin", 4096, NULL, 5, &task_handler_2);
 
     while (true){
         // nothing is running in this
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
     }
 }
 
@@ -448,6 +485,11 @@ int isObjectPresent(smartbin_t *bin){
     }
     return 0;
 #endif
+    if(distance_mm < ACTIVATE_DISTANCE_MM){
+        ESP_LOGI(TAG, "Presense!");
+        return 1;
+    }
+    return 0;
 }
 
 int isYoloReady(smartbin_t *bin){
