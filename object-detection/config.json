@@ -1,6 +1,9 @@
 {
 	"cam": "/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_BA15B86F-video-index0",
+	"cam_facelogin": "/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_BA15B86F-video-index0",
 	"video": "videos/smartbin-test.mp4",
+	"user_json": "../db/",
+	"face_source": "../db/face/",
 	"tag_objclass": "smartbin.objclass",
 	"tag_userdetail": "smartbin.userdetail",
 	"tag_login": "smartbin.login",
