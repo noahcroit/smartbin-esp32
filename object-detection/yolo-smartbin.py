@@ -352,7 +352,7 @@ def task_find_roi(queue_in, q_to_overlay, q_to_redis, q_to_esp32):
 
 
 
-def task_update_userdetail(q_redis, tag_objclass, tag_userdetail):
+def task_update_userdetail(q_redis, tag_objclass, tag_userdetail, user_json):
     global snapshot_isrun
     global userdetail
 
@@ -379,7 +379,7 @@ def task_update_userdetail(q_redis, tag_objclass, tag_userdetail):
                         userdetail["Rewards"] += reward
                         userdetail[objclass] += 1
                         userdetail["Recycling"] += 1
-                        save_json_userdetail(userdetail)
+                        save_json_userdetail(userdetail, user_json)
 
                     # Set REDIS tags
                     print("objclass redis sent")
@@ -399,7 +399,7 @@ def task_update_userdetail(q_redis, tag_objclass, tag_userdetail):
 
 
 
-def task_facelogin(tag_login, tag_userdetail, tag_redeem):
+def task_facelogin(tag_login, tag_userdetail, tag_redeem, cam_source, face_source, user_json):
     global userdetail
 
     # REDIS client
@@ -419,12 +419,12 @@ def task_facelogin(tag_login, tag_userdetail, tag_redeem):
                     lock.acquire()
                     # Call face login function in here
                     #
-                    username = facelogin()
+                    username = facelogin(cam_source, face_source)
                     if username != None:
                         # login success
                         # load JSON file of detected user
                         print("Load user JSON file")
-                        userdetail = load_json_userdetail(username)
+                        userdetail = load_json_userdetail(username, user_json)
                         print("userdetail=", userdetail)
                         json_obj = json.dumps(userdetail, indent=4)
                         r.publish(tag_userdetail, json_obj)
@@ -448,8 +448,8 @@ def task_facelogin(tag_login, tag_userdetail, tag_redeem):
 
 
 
-def facelogin():
-    return "test user"
+def facelogin(cam_source, face_source):
+    return "nat"
 
 def calcReward(objclass):
     pts=0
@@ -485,13 +485,15 @@ def calRedeem(userdetail, redeem_type):
 
     return userdetail
 
-def load_json_userdetail(name):
+def load_json_userdetail(name, user_json):
     # This shouldn't be written like this.
     # Only for simulate the login process.
     # It should be rewriten with username searhing technique on database file (txt, csv, json etc.)
     filename = None
     if name == "test user":
         filename = "user.json"
+    else:
+        filename = user_json + name + ".json"
 
     if not name == None:
         f = open(filename)
@@ -520,13 +522,16 @@ def load_json_userdetail(name):
     else:
         return None
 
-def save_json_userdetail(user_dict):
+def save_json_userdetail(user_dict, user_json):
     # This shouldn't be written like this.
     # Only for simulate the login process.
     # It should be rewriten with username searhing technique on database file (txt, csv, json etc.)
     filename = None
-    if user_dict['name'] == "test user":
-        filename = "user.json"
+    if not user_dict['name'] == None:
+        if user_dict['name'] == "test user": # default user
+            filename = "user.json"
+        else:
+            filename = user_json + user_dict['name'] + ".json"
 
     if not filename == None:
         f = open(filename, 'w')
@@ -543,19 +548,22 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Adding optional argument
     parser.add_argument("-s", "--source", help="source-type (webcam, video)", default='video')
-    parser.add_argument("-j", "--json", help="JSON file for the configuration", default='config.json')
+    parser.add_argument("-c", "--config", help="JSON file for the configuration", default='config.json')
     parser.add_argument("-d", "--displayflag", help="display image with cv or not (true, false)", default='false')
 
     # Read arguments from command line
     args = parser.parse_args()
 
     # URL for video or camera source
-    f = open(args.json)
+    f = open(args.config)
     data = json.load(f)
     if args.source == "cam":
         source = data['cam']
     if args.source == "video":
         source = data['video']
+    user_json = data['user_json']
+    cam_facelogin = data['cam_facelogin']
+    face_source = data['face_source']
     tag_objclass = data['tag_objclass']
     tag_userdetail = data['tag_userdetail']
     tag_login = data['tag_login']
@@ -590,15 +598,15 @@ if __name__ == "__main__":
     queue_redis = queue.Queue()
     queue_yolo_esp32 = queue.Queue()
 
-    userdetail = load_json_userdetail("test user")
+    userdetail = load_json_userdetail("test user", user_json) # default user
 
     # config tasks
     t1 = threading.Thread(target=task_snapshot, args=(queue_snapshot, source, args.source))
     t2 = threading.Thread(target=task_find_roi, args=(queue_snapshot, queue_roi, queue_redis, queue_yolo_esp32))
     t3 = threading.Thread(target=task_overlay, args=(queue_roi, args.displayflag))
-    t4 = threading.Thread(target=task_update_userdetail, args=(queue_redis, tag_objclass, tag_userdetail))
+    t4 = threading.Thread(target=task_update_userdetail, args=(queue_redis, tag_objclass, tag_userdetail, user_json))
     t5 = threading.Thread(target=task_mqttsub, args=(queue_yolo_esp32,))
-    t6 = threading.Thread(target=task_facelogin, args=(tag_login, tag_userdetail, tag_redeem))
+    t6 = threading.Thread(target=task_facelogin, args=(tag_login, tag_userdetail, tag_redeem, cam_facelogin, face_source, user_json))
 
     # start tasks
     worker_isrun = True
@@ -626,7 +634,7 @@ if __name__ == "__main__":
                 t3.start()
             if not t4.is_alive():
                 print("restart task redis")
-                t4 = threading.Thread(target=task_update_userdetail, args=(queue_redis, tag_objclass))
+                t4 = threading.Thread(target=task_update_userdetail, args=(queue_redis, tag_objclass, tag_userdetail, user_json))
                 t4.start()
             if not t5.is_alive():
                 print("restart task mqttsub")
@@ -634,7 +642,7 @@ if __name__ == "__main__":
                 t5.start()
             if not t6.is_alive():
                 print("restart task facelogin")
-                t6 = threading.Thread(target=task_facelogin, args=(tag_login, tag_userdetail, tag_redeem))
+                t6 = threading.Thread(target=task_facelogin, args=(tag_login, tag_userdetail, tag_redeem, cam_facelogin, face_source, user_json))
                 t6.start()
 
             time.sleep(3)
