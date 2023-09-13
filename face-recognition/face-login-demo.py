@@ -34,7 +34,7 @@ def face_compare(face_input, face_ref_encodings, face_names):
 def demo_app():
 
     cam_source = "/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_BA15B86F-video-index0"
-    user_face_folder = "face/users/"
+    user_face_folder = "face/"
     dir_list = os.listdir(user_face_folder)
     face_ref_encodings = []
     face_names = []
