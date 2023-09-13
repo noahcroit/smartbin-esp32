@@ -158,7 +158,7 @@ def task_overlay(queue_roi, displayflag):
 
 
 
-def task_find_roi(queue_in, q_to_overlay, q_to_redis, q_to_esp32, coeff):
+def task_find_roi(queue_in, q_to_overlay, q_to_redis, q_to_esp32):
     global snapshot_isrun
 
     time.sleep(1)
@@ -193,6 +193,7 @@ def task_find_roi(queue_in, q_to_overlay, q_to_redis, q_to_esp32, coeff):
     # looping for YOLO
     detected_obj = []
     detected_count=0
+    not_detected_count=0
 
     while snapshot_isrun:
         try:
@@ -311,25 +312,35 @@ def task_find_roi(queue_in, q_to_overlay, q_to_redis, q_to_esp32, coeff):
                             occurence_count = Counter(detected_obj)
                             objclass = occurence_count.most_common(1)[0][0]
                             print("detected object is ", objclass)
+                            l_other_class = ['drinkwater', 'snack']
+                            if objclass in l_other_class:
+                                objclass = "other"
                             q_to_redis.put(objclass)
                             q_to_esp32.put(objclass)
                             detected_obj = []
                             detected_count=0
                             snapshot_isrun = False
 
+                    # prepare data for overlaying
+                    dict_output = {"frame":frame_in,
+                                   "class":output_class,
+                                   "x1":pos_x1,
+                                   "y1":pos_y1,
+                                   "x2":pos_x2,
+                                   "y2":pos_y2,
+                                   "color":classes_color
+                                   }
+                    q_to_overlay.put(dict_output)
+
+                else:
+                    not_detected_count += 1
+                    if not_detected_count >= 20:
+                        not_detected_count = 0
+                        q_to_redis.put("error")
+                        snapshot_isrun = False
+
                 # write to output buffer after finished the process
                 print("Yolo finished")
-
-                # prepare data for overlaying
-                dict_output = {"frame":frame_in,
-                               "class":output_class,
-                               "x1":pos_x1,
-                               "y1":pos_y1,
-                               "x2":pos_x2,
-                               "y2":pos_y2,
-                               "color":classes_color
-                               }
-                q_to_overlay.put(dict_output)
 
             else:
                 print("frame=None")
@@ -359,20 +370,27 @@ def task_update_userdetail(q_redis, tag_objclass, tag_userdetail):
 
                 # Update user pts from the objclass result
                 if not userdetail == None:
-                    reward = calcReward(objclass)
-                    print("reward=", reward)
-                    userdetail["total_pts"] += reward
-                    userdetail[objclass] += 1
-                    save_json_userdetail(userdetail)
+                    if objclass == "error":
+                        print("error, no point")
+                        reward = 0
+                    else:
+                        reward = calcReward(objclass)
+                        print("reward(for detected obj)=", reward)
+                        userdetail["Rewards"] += reward
+                        userdetail[objclass] += 1
+                        userdetail["Recycling"] += 1
+                        save_json_userdetail(userdetail)
 
-                # Set REDIS tags
-                print("objclass redis sent")
-                objclass_msg = {"detected_item":objclass, "reward":reward}
-                json_obj = json.dumps(objclass_msg, indent=4)
-                r.publish(tag_objclass, json_obj)
-                print("updated userdetail redis sent")
-                json_obj = json.dumps(userdetail, indent=4)
-                r.publish(tag_userdetail, json_obj)
+                    # Set REDIS tags
+                    print("objclass redis sent")
+                    objclass_msg = {"detected_item":objclass, "reward":reward}
+                    json_obj = json.dumps(objclass_msg, indent=4)
+                    r.publish(tag_objclass, json_obj)
+                    print("updated userdetail redis sent")
+                    json_obj = json.dumps(userdetail, indent=4)
+                    r.publish(tag_userdetail, json_obj)
+                else:
+                    print("Do not login yet, no update for recycling point")
 
         except Exception as e:
             print("something wrong in task REDIS")
@@ -381,35 +399,50 @@ def task_update_userdetail(q_redis, tag_objclass, tag_userdetail):
 
 
 
-def task_facelogin(tag_login, tag_userdetail):
+def task_facelogin(tag_login, tag_userdetail, tag_redeem):
     global userdetail
 
     # REDIS client
     r = redis.Redis(host='127.0.0.1', port=6379)
     p = r.pubsub()
     p.subscribe(tag_login)
+    p.subscribe(tag_redeem)
     time.sleep(1)
 
     while worker_isrun:
         message = p.get_message()
         if not message == None:
             print("msg:", message)
-            if message['data'] == b'1':
-                print("activate face login")
+            if message['channel'] == bytes(tag_login, 'utf-8'):
+                if message['data'] == b'1':
+                    print("activate face login")
+                    lock.acquire()
+                    # Call face login function in here
+                    #
+                    username = facelogin()
+                    if username != None:
+                        # login success
+                        # load JSON file of detected user
+                        print("Load user JSON file")
+                        userdetail = load_json_userdetail(username)
+                        print("userdetail=", userdetail)
+                        json_obj = json.dumps(userdetail, indent=4)
+                        r.publish(tag_userdetail, json_obj)
+                    lock.release()
+
+            elif message['channel'] == bytes(tag_redeem, 'utf-8'):
+                redeem_type = message['data']
+                print("redeem type=", redeem_type)
                 lock.acquire()
-                # Call face login function in here
-                #
-                username = facelogin()
-                if username != None:
-                    # login success
-                    # load JSON file of detected user
-                    print("Load user JSON file")
-                    userdetail = load_json_userdetail(username)
-                    print("userdetail=", userdetail)
+                if userdetail != None:
+                    # Redeem function call here
+                    userdetail = calRedeem(userdetail, redeem_type)
+
+                    print("Redeem!, now userdetail=", userdetail)
                     json_obj = json.dumps(userdetail, indent=4)
                     r.publish(tag_userdetail, json_obj)
-
-                time.sleep(1)
+                else:
+                    print("userdetail is empty, please login first")
                 lock.release()
         time.sleep(0.5)
 
@@ -424,9 +457,33 @@ def calcReward(objclass):
         pts = 1
     elif objclass == "hotcup":
         pts = 1
-    elif objclass == "drinkwater":
+    elif objclass == "other":
         pts = 1
     return pts
+
+def calRedeem(userdetail, redeem_type):
+    if userdetail['Rewards'] >= 10:
+        if redeem_type == b'1':
+            print("redeem type : coldcup")
+            userdetail['Rewards'] -= 10
+            userdetail['Total'] += 10
+            send_email(userdetail)
+
+        elif redeem_type == b'2':
+            print("redeem type : hotcup")
+            userdetail['Rewards'] -= 10
+            userdetail['Total'] += 10
+            send_email(userdetail)
+
+        elif redeem_type == b'3':
+            print("redeem type : other products")
+            userdetail['Rewards'] -= 10
+            userdetail['Total'] += 10
+            send_email(userdetail)
+    else:
+        print("Cannot redeem, Rewards is less than 10")
+
+    return userdetail
 
 def load_json_userdetail(name):
     # This shouldn't be written like this.
@@ -440,7 +497,10 @@ def load_json_userdetail(name):
         f = open(filename)
         data = json.load(f)
         username = data['name']
-        pts = data['total_pts']
+        email = data['email']
+        recycling = data['Recycling']
+        rewards = data['Rewards']
+        total = data['Total']
         cold = data['coldcup']
         hot = data['hotcup']
         other = data['other']
@@ -448,7 +508,10 @@ def load_json_userdetail(name):
 
         user_dict = {
                 "name":username,
-                "total_pts":pts,
+                "email":email,
+                "Recycling":recycling,
+                "Rewards":rewards,
+                "Total":total,
                 "coldcup":cold,
                 "hotcup":hot,
                 "other":other
@@ -470,6 +533,8 @@ def save_json_userdetail(user_dict):
         json.dump(user_dict, f)
         f.close()
 
+def send_email(userdetail):
+    print("send email to ", userdetail["email"])
 
 
 if __name__ == "__main__":
@@ -494,6 +559,7 @@ if __name__ == "__main__":
     tag_objclass = data['tag_objclass']
     tag_userdetail = data['tag_userdetail']
     tag_login = data['tag_login']
+    tag_redeem = data['tag_redeem']
     f.close()
 
 
@@ -524,15 +590,15 @@ if __name__ == "__main__":
     queue_redis = queue.Queue()
     queue_yolo_esp32 = queue.Queue()
 
-    userdetail = None
+    userdetail = load_json_userdetail("test user")
 
     # config tasks
     t1 = threading.Thread(target=task_snapshot, args=(queue_snapshot, source, args.source))
-    t2 = threading.Thread(target=task_find_roi, args=(queue_snapshot, queue_roi, queue_redis, queue_yolo_esp32, data['coeff']))
+    t2 = threading.Thread(target=task_find_roi, args=(queue_snapshot, queue_roi, queue_redis, queue_yolo_esp32))
     t3 = threading.Thread(target=task_overlay, args=(queue_roi, args.displayflag))
     t4 = threading.Thread(target=task_update_userdetail, args=(queue_redis, tag_objclass, tag_userdetail))
     t5 = threading.Thread(target=task_mqttsub, args=(queue_yolo_esp32,))
-    t6 = threading.Thread(target=task_facelogin, args=(tag_login, tag_userdetail))
+    t6 = threading.Thread(target=task_facelogin, args=(tag_login, tag_userdetail, tag_redeem))
 
     # start tasks
     worker_isrun = True
@@ -552,7 +618,7 @@ if __name__ == "__main__":
                 t1.start()
             if not t2.is_alive():
                 print("restart task find roi")
-                t2 = threading.Thread(target=task_find_roi, args=(queue_snapshot, queue_roi, queue_redis, queue_yolo_esp32, data['coeff']))
+                t2 = threading.Thread(target=task_find_roi, args=(queue_snapshot, queue_roi, queue_redis, queue_yolo_esp32))
                 t2.start()
             if not t3.is_alive():
                 print("restart task overlay")
@@ -568,7 +634,7 @@ if __name__ == "__main__":
                 t5.start()
             if not t6.is_alive():
                 print("restart task facelogin")
-                t6 = threading.Thread(target=task_facelogin, args=(tag_login, tag_userdetail))
+                t6 = threading.Thread(target=task_facelogin, args=(tag_login, tag_userdetail, tag_redeem))
                 t6.start()
 
             time.sleep(3)
