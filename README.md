@@ -19,7 +19,7 @@ idf.py flash -p /dev/ttyUSB0
 Use OpenCV-python, Run on Ubuntu server. To run this
 ```
 cd object-detection
-python yolo-smartbin.py -s cam -j config.json -d true
+python yolo-smartbin.py -s cam -c config.json -d true
 ```
 Testing camera with ffmpeg or cheese
 ```
