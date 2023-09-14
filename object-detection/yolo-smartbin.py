@@ -419,7 +419,8 @@ def task_facelogin(tag_login, tag_userdetail, tag_redeem, cam_source, face_sourc
                     lock.acquire()
                     # Call face login function in here
                     #
-                    username = facelogin(cam_source, face_source)
+                    username = facelogin(cam_source, face_source, r)
+                    print("login result : ", username)
                     if username != None:
                         # login success
                         # load JSON file of detected user
@@ -448,7 +449,7 @@ def task_facelogin(tag_login, tag_userdetail, tag_redeem, cam_source, face_sourc
 
 
 
-def facelogin(cam_source, face_source):
+def facelogin(cam_source, face_source, redis_client):
     print("run face login, scanning face")
     dir_list = os.listdir(face_source)
     face_ref_encodings = []
@@ -464,7 +465,7 @@ def facelogin(cam_source, face_source):
 
     # looping for face recognition
     stream = cv2.VideoCapture(cam_source)
-    print("start capture")
+    print("start capture for face recog")
     matched_name=None
     skip_frame=0
     compared_frame=0
@@ -473,14 +474,19 @@ def facelogin(cam_source, face_source):
         if not frame is None:
             skip_frame += 1
             if skip_frame>=15:
+                # encode image
+                ret, buf = cv2.imencode('.jpg', frame)
+                jpg_byte = base64.b64encode(buf)
+                jpg_str = jpg_byte.decode('UTF-8')
+                redis_client.set("smartbin.faceimage", jpg_str)
+
                 # face recognition in here!
                 matched_name, frame = face_compare(frame, face_ref_encodings, face_names)
                 skip_frame=0
                 compared_frame += 1
-                if matched_name != None or compared_frame > 30:
+                if matched_name != None or compared_frame > 10:
+                    print("stop face recognition")
                     break
-            cv2.imshow("output frame", frame)
-            cv2.waitKey(1)
     stream.release()
 
     return matched_name
@@ -488,7 +494,7 @@ def facelogin(cam_source, face_source):
 def face_compare(face_input, face_ref_encodings, face_names):
     face_locations = face_recognition.face_locations(face_input)
     if face_locations == None or len(face_locations) != 1 :
-        return False, face_input # No face is detected or More than 1 face
+        return None, face_input # No face is detected or More than 1 face
 
     matched_name = None
     face_input_encodings = face_recognition.face_encodings(face_input, face_locations)
