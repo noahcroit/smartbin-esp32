@@ -486,7 +486,7 @@ def facelogin(cam_source, face_source, redis_client):
                 ret, buf = cv2.imencode('.jpg', frame)
                 jpg_byte = base64.b64encode(buf)
                 jpg_str = jpg_byte.decode('UTF-8')
-                redis_client.set("smartbin.faceimage", jpg_str)
+                redis_client.publish("smartbin.faceimage", jpg_str)
 
                 # face recognition in here!
                 matched_name, frame = face_compare(frame, face_ref_encodings, face_names)
