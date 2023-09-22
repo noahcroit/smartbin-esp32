@@ -314,7 +314,7 @@ def task_find_roi(queue_in, q_to_overlay, q_to_redis, q_to_esp32):
                         detected_count += 1
 
                         from collections import Counter
-                        if detected_count >= 6 and logo_count >= 2:
+                        if detected_count >= 8 and logo_count >= 4:
                             occurence_count = Counter(detected_obj)
                             objclass = occurence_count.most_common(1)[0][0]
                             print("detected object is ", objclass)
@@ -342,6 +342,7 @@ def task_find_roi(queue_in, q_to_overlay, q_to_redis, q_to_esp32):
                 else:
                     not_detected_count += 1
                     if not_detected_count >= 20:
+                        detected_obj = []
                         not_detected_count = 0
                         logo_count = 0
                         q_to_redis.put("error")
