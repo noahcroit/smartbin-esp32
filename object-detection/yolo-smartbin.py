@@ -194,6 +194,7 @@ def task_find_roi(queue_in, q_to_overlay, q_to_redis, q_to_esp32):
     detected_obj = []
     detected_count=0
     not_detected_count=0
+    logo_count=0
 
     while snapshot_isrun:
         try:
@@ -305,20 +306,26 @@ def task_find_roi(queue_in, q_to_overlay, q_to_redis, q_to_esp32):
 
                         # Decide which class of the object is, by using frequency count
                         for i in range(len(output_class)):
-                            detected_obj.append(output_class[i])
+                            if not output_class[i] == "amazon-logo":
+                                detected_obj.append(output_class[i])
+                            else:
+                                logo_count += 1
+                                print("found amazon logo")
                         detected_count += 1
+
                         from collections import Counter
-                        if detected_count >= 5:
+                        if detected_count >= 6 and logo_count >= 2:
                             occurence_count = Counter(detected_obj)
                             objclass = occurence_count.most_common(1)[0][0]
                             print("detected object is ", objclass)
-                            l_other_class = ['drinkwater', 'snack']
+                            l_other_class = ['drinkwater', 'drinkwater2', 'snack']
                             if objclass in l_other_class:
                                 objclass = "other"
                             q_to_redis.put(objclass)
                             q_to_esp32.put(objclass)
                             detected_obj = []
                             detected_count=0
+                            logo_count = 0
                             snapshot_isrun = False
 
                     # prepare data for overlaying
@@ -336,6 +343,7 @@ def task_find_roi(queue_in, q_to_overlay, q_to_redis, q_to_esp32):
                     not_detected_count += 1
                     if not_detected_count >= 20:
                         not_detected_count = 0
+                        logo_count = 0
                         q_to_redis.put("error")
                         snapshot_isrun = False
 
