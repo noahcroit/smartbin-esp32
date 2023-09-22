@@ -165,7 +165,7 @@ def task_find_roi(queue_in, q_to_overlay, q_to_redis, q_to_esp32):
     if snapshot_isrun:
         # Label File Configuration
         # load the class output labels of input YOLO model
-        label_file = "yolov4-smartbin/obj.names"
+        label_file = "yolov4-smartbin-v2/obj.names"
         LABELS = open(label_file).read().strip().split("\n")
         print(LABELS)
 
@@ -175,8 +175,8 @@ def task_find_roi(queue_in, q_to_overlay, q_to_redis, q_to_esp32):
 
         # YOLO Configuration
         # load YOLO object detector (.weight file and .cfg file)
-        cfg_file = "yolov4-smartbin/yolov4-smartbin.cfg"
-        weight_file = "yolov4-smartbin/backup/yolov4-smartbin_2000.weights"
+        cfg_file = "yolov4-smartbin-v2/yolov4-smartbin-2.cfg"
+        weight_file = "yolov4-smartbin-v2/backup/yolov4-smartbin-2_5000.weights"
         print("[INFO] loading YOLO from disk...")
         net = cv2.dnn.readNetFromDarknet(cfg_file, weight_file)
 
