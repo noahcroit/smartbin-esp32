@@ -54,13 +54,17 @@
 #define SERVO_ANGLE_R_OTHER     0
 #define SERVO_ANGLE_L_IDLE      0
 #define SERVO_ANGLE_R_IDLE      0
-#define ACTIVATE_DISTANCE_MM    150
+#define ACTIVATE_DISTANCE_MM    180
 #define DISTANCE_SENSOR_I2C_PORT    I2C_NUM_0  
 #define DISTANCE_SENSOR_I2C_PIN_SCL GPIO_NUM_22  
 #define DISTANCE_SENSOR_I2C_PIN_SDA GPIO_NUM_21  
 #define DISTANCE_SENSOR_I2C_ADDRESS 0x29  
 #define DISTANCE_SENSOR_XSHUT       -1  
-#define DISTANCE_SENSOR_2V8         0  
+#define DISTANCE_SENSOR_2V8         0
+#define LED_MQTTCONNECTED 13
+#define LED_BINSTATE_IDLE 12
+#define LED_BINSTATE_YOLO 14
+#define LED_BINSTATE_SORT 27
 
 typedef struct{
     int8_t binState;
@@ -114,6 +118,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
         smartbin.mqttConnected = MQTT_CONNECTED;
+        gpio_set_level(LED_MQTTCONNECTED, 0);
 
         //msg_id = esp_mqtt_client_publish(client, "/topic/qos1", "data_3", 0, 1, 0);
         //ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
@@ -137,6 +142,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
         smartbin.mqttConnected = MQTT_DISCONNECTED;
+        gpio_set_level(LED_MQTTCONNECTED, 1);
         break;
 
     case MQTT_EVENT_SUBSCRIBED:
@@ -250,13 +256,31 @@ void task_binstatemachine(){
     smartbin.yoloReady = 0;
 
     /*
+     * Initialize LEDs
+     *
+     */
+    //zero-initialize the GPIO config structure.
+    gpio_config_t io_conf = {};
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    io_conf.pin_bit_mask = (1ULL<<(LED_MQTTCONNECTED)) | (1ULL<<(LED_BINSTATE_IDLE)) | (1ULL<<(LED_BINSTATE_YOLO)) | (1ULL<<(LED_BINSTATE_SORT));
+    io_conf.pull_down_en = 0;
+    io_conf.pull_up_en = 0;
+    gpio_config(&io_conf);
+    gpio_set_level(LED_MQTTCONNECTED, 1);
+    gpio_set_level(LED_BINSTATE_IDLE, 1);
+    gpio_set_level(LED_BINSTATE_YOLO, 1);
+    gpio_set_level(LED_BINSTATE_SORT, 1);
+
+
+    /*
      * Lid Opener Configuration
      *
      */
     opener_config_t opener_config;
     opener_config.in1 = GPIO_NUM_2;
     opener_config.in2 = GPIO_NUM_4;
-    opener_config.sw_fullopen  = GPIO_NUM_22;
+    opener_config.sw_fullopen  = GPIO_NUM_5;
     opener_config.sw_fullclose = GPIO_NUM_23;
     opener_config.duty = 0;
     opener_init(&opener_config);
@@ -317,7 +341,10 @@ void task_binstatemachine(){
             case BINSTATE_IDLE:
                 ESP_LOGI(TAG, "IDLE STATE");
                 if (isObjectPresent(&smartbin)){
+                    // Move to YOLO state
                     smartbin.binState = BINSTATE_YOLO;
+                    gpio_set_level(LED_BINSTATE_IDLE, 1);
+                    gpio_set_level(LED_BINSTATE_YOLO, 0);
                     ESP_LOGI(TAG, "GO TO YOLO STATE");
                 }
                 break;
@@ -340,11 +367,16 @@ void task_binstatemachine(){
                 }
                 if (timeout_yolo <= 0){
                     smartbin.binState = BINSTATE_IDLE;
+                    gpio_set_level(LED_BINSTATE_YOLO, 1);
+                    gpio_set_level(LED_BINSTATE_IDLE, 0);
                     xQueueReset(queue_yolo_result);
                     ESP_LOGI(TAG, "Timeout, GO TO IDLE");
                 }
                 else{
+                    // Move to SORTCTRL state
                     smartbin.binState = BINSTATE_SORTCTRL;
+                    gpio_set_level(LED_BINSTATE_YOLO, 1);
+                    gpio_set_level(LED_BINSTATE_SORT, 0);
                 }
                 break;
 
@@ -381,7 +413,10 @@ void task_binstatemachine(){
                     angle_r = SERVO_ANGLE_R_OTHER;
                 }
                 else{
+                    // Reset state to IDLE
                     smartbin.binState = BINSTATE_IDLE;
+                    gpio_set_level(LED_BINSTATE_SORT, 1);
+                    gpio_set_level(LED_BINSTATE_IDLE, 0);
                     ESP_LOGI(TAG, "Not any amazon product, GO TO IDLE");
                     break;
                 }
@@ -400,11 +435,16 @@ void task_binstatemachine(){
                 opener_close(&opener_config);
                 ESP_LOGI(TAG, "Closing");
                 vTaskDelay(1000 / portTICK_PERIOD_MS);
-                smartbin.binState = BINSTATE_IDLE;
                 sort_servo_set_angle(&servo_l, SERVO_ANGLE_L_IDLE);
                 sort_servo_set_angle(&servo_r, SERVO_ANGLE_R_IDLE);
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
                 sort_servo_disable(&servo_l);
                 sort_servo_disable(&servo_r);
+
+                // Reset state to IDLE
+                smartbin.binState = BINSTATE_IDLE;
+                gpio_set_level(LED_BINSTATE_SORT, 1);
+                gpio_set_level(LED_BINSTATE_IDLE, 0);
                 break;
         }
 
@@ -428,7 +468,6 @@ void task_mqtt_connection(){
         if (smartbin.mqttConnected == MQTT_DISCONNECTED){
             ESP_ERROR_CHECK(example_connect());
             mqtt_app_start();
-            smartbin.mqttConnected = MQTT_CONNECTED; 
         }
         else{
             /*
