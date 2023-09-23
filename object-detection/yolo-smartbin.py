@@ -308,13 +308,22 @@ def task_find_roi(queue_in, q_to_overlay, q_to_redis, q_to_esp32):
                         for i in range(len(output_class)):
                             if not output_class[i] == "amazon-logo":
                                 detected_obj.append(output_class[i])
+                                detected_count += 1
                             else:
                                 logo_count += 1
                                 print("found amazon logo")
-                        detected_count += 1
+
+                        # not-amazon's product has been founded for 20 times
+                        if detected_count >= 20:
+                            detected_obj = []
+                            logo_count = 0
+                            detected_count = 0
+                            q_to_redis.put("error")
+                            snapshot_isrun = False
+                            break
 
                         from collections import Counter
-                        if detected_count >= 8 and logo_count >= 4:
+                        if logo_count >= 6:
                             occurence_count = Counter(detected_obj)
                             objclass = occurence_count.most_common(1)[0][0]
                             print("detected object is ", objclass)
@@ -324,9 +333,10 @@ def task_find_roi(queue_in, q_to_overlay, q_to_redis, q_to_esp32):
                             q_to_redis.put(objclass)
                             q_to_esp32.put(objclass)
                             detected_obj = []
-                            detected_count=0
                             logo_count = 0
+                            detected_count = 0
                             snapshot_isrun = False
+                            break
 
                     # prepare data for overlaying
                     dict_output = {"frame":frame_in,
