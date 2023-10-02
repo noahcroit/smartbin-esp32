@@ -10,6 +10,7 @@ import base64
 import paho.mqtt.client as mqtt
 import os
 import face_recognition
+from playsound import playsound
 
 # Global Variables for Threads
 worker_isrun = False
@@ -389,6 +390,7 @@ def task_update_userdetail(q_redis, tag_objclass, tag_userdetail, user_json):
 
                 # Update user pts from the objclass result
                 if not userdetail == None:
+                    announce_objclass(objclass)
                     if objclass == "error":
                         print("error, no point")
                         reward = 0
@@ -435,6 +437,7 @@ def task_facelogin(tag_login, tag_userdetail, tag_redeem, cam_source, face_sourc
             if message['channel'] == bytes(tag_login, 'utf-8'):
                 if message['data'] == b'1':
                     print("activate face login")
+                    playsound("../db/sound/" + "Face login, Please put your face on Kiosk's camera.mp3")
                     lock.acquire()
                     # Call face login function in here
                     #
@@ -448,21 +451,21 @@ def task_facelogin(tag_login, tag_userdetail, tag_redeem, cam_source, face_sourc
                         print("userdetail=", userdetail)
                         json_obj = json.dumps(userdetail, indent=4)
                         r.publish(tag_userdetail, json_obj)
+                        playsound("../db/sound/" + "Login Success!.mp3")
                     lock.release()
 
             elif message['channel'] == bytes(tag_redeem, 'utf-8'):
                 redeem_type = message['data']
                 print("redeem type=", redeem_type)
                 lock.acquire()
-                if userdetail != None:
+                if redeem_type in [b'1', b'2', b'3']:
                     # Redeem function call here
-                    userdetail = calRedeem(userdetail, redeem_type)
+                    userdetail = calcRedeem(userdetail, redeem_type)
 
                     print("Redeem!, now userdetail=", userdetail)
                     json_obj = json.dumps(userdetail, indent=4)
                     r.publish(tag_userdetail, json_obj)
-                else:
-                    print("userdetail is empty, please login first")
+
                 lock.release()
         time.sleep(0.5)
 
@@ -533,6 +536,16 @@ def face_compare(face_input, face_ref_encodings, face_names):
 
     return matched_name, face_input
 
+def announce_objclass(objclass):
+    if objclass == "coldcup":
+        playsound("../db/sound/" + "Success! Coldcup.mp3")
+    elif objclass == "hotcup":
+        playsound("../db/sound/" + "Success! Hotcup.mp3")
+    elif objclass == "other":
+        playsound("../db/sound/" + "Success! Other type.mp3")
+    else:
+        playsound("../db/sound/" + "Failed. Not amazon's product or tImeout..mp3")
+
 def calcReward(objclass):
     pts=0
     if objclass == "coldcup":
@@ -543,7 +556,7 @@ def calcReward(objclass):
         pts = 1
     return pts
 
-def calRedeem(userdetail, redeem_type):
+def calcRedeem(userdetail, redeem_type):
     if userdetail['Rewards'] >= 10:
         if redeem_type == b'1':
             print("redeem type : coldcup")
@@ -562,8 +575,10 @@ def calRedeem(userdetail, redeem_type):
             userdetail['Rewards'] -= 10
             userdetail['Total'] += 10
             send_email(userdetail)
+        playsound("../db/sound/" + "Redeem! Sending the code to your email.mp3")
     else:
         print("Cannot redeem, Rewards is less than 10")
+        playsound("../db/sound/" + "Cannot Redeem, Not enough points.mp3")
 
     return userdetail
 
