@@ -10,6 +10,7 @@ $ cmake .. -DDLIB_USE_CUDA=0 -DUSE_AVX_INSTRUCTIONS=1
 $ cmake --build .
 $ cd ..
 $ python setup.py install --set DLIB_USE_CUDA=0
+$ pip3 install face-recognition
 ```
 
 To use face-login demo, run
