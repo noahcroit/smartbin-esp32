@@ -437,7 +437,7 @@ def task_facelogin(tag_login, tag_userdetail, tag_redeem, cam_source, face_sourc
             if message['channel'] == bytes(tag_login, 'utf-8'):
                 if message['data'] == b'1':
                     print("activate face login")
-                    playsound("../db/sound/" + "Face login, Please put your face on Kiosk's camera.mp3")
+                    playsound("/home/smartbin/smartbin-esp32/db/sound/" + "Face login, Please put your face on Kiosk's camera.mp3")
                     lock.acquire()
                     # Call face login function in here
                     #
@@ -451,7 +451,7 @@ def task_facelogin(tag_login, tag_userdetail, tag_redeem, cam_source, face_sourc
                         print("userdetail=", userdetail)
                         json_obj = json.dumps(userdetail, indent=4)
                         r.publish(tag_userdetail, json_obj)
-                        playsound("../db/sound/" + "Login Success!.mp3")
+                        playsound("/home/smartbin/smartbin-esp32/db/sound/" + "Login Success!.mp3")
                     lock.release()
 
             elif message['channel'] == bytes(tag_redeem, 'utf-8'):
@@ -538,13 +538,13 @@ def face_compare(face_input, face_ref_encodings, face_names):
 
 def announce_objclass(objclass):
     if objclass == "coldcup":
-        playsound("../db/sound/" + "Success! Coldcup.mp3")
+        playsound("/home/smartbin/smartbin-esp32/db/sound/" + "Success! Coldcup.mp3")
     elif objclass == "hotcup":
-        playsound("../db/sound/" + "Success! Hotcup.mp3")
+        playsound("/home/smartbin/smartbin-esp32/db/sound/" + "Success! Hotcup.mp3")
     elif objclass == "other":
-        playsound("../db/sound/" + "Success! Other type.mp3")
+        playsound("/home/smartbin/smartbin-esp32/db/sound/" + "Success! Other type.mp3")
     else:
-        playsound("../db/sound/" + "Failed. Not amazon's product or tImeout..mp3")
+        playsound("/home/smartbin/smartbin-esp32/db/sound/" + "Failed. Not amazon's product or timeout.mp3")
 
 def calcReward(objclass):
     pts=0
@@ -575,10 +575,10 @@ def calcRedeem(userdetail, redeem_type):
             userdetail['Rewards'] -= 10
             userdetail['Total'] += 10
             send_email(userdetail)
-        playsound("../db/sound/" + "Redeem! Sending the code to your email.mp3")
+        playsound("/home/smartbin/smartbin-esp32/db/sound/" + "Redeem! Sending the code to your email.mp3")
     else:
         print("Cannot redeem, Rewards is less than 10")
-        playsound("../db/sound/" + "Cannot Redeem, Not enough points.mp3")
+        playsound("/home/smartbin/smartbin-esp32/db/sound/" + "Cannot Redeem, Not enough points.mp3")
 
     return userdetail
 
