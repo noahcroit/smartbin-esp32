@@ -544,7 +544,7 @@ def announce_objclass(objclass):
     elif objclass == "other":
         playsound("/home/smartbin/smartbin-esp32/db/sound/" + "Success! Other type.mp3")
     else:
-        playsound("/home/smartbin/smartbin-esp32/db/sound/" + "Failed. Not amazon's product or timeout.mp3")
+        playsound("/home/smartbin/smartbin-esp32/db/sound/" + "NotAmazonProduct.mp3")
 
 def calcReward(objclass):
     pts=0
