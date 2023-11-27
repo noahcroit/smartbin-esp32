@@ -10,7 +10,6 @@ import base64
 import paho.mqtt.client as mqtt
 import os
 import face_recognition
-from playsound import playsound
 
 # Global Variables for Threads
 worker_isrun = False
@@ -437,7 +436,7 @@ def task_facelogin(tag_login, tag_userdetail, tag_redeem, cam_source, face_sourc
             if message['channel'] == bytes(tag_login, 'utf-8'):
                 if message['data'] == b'1':
                     print("activate face login")
-                    playsound("/home/smartbin/smartbin-esp32/db/sound/" + "Face login, Please put your face on Kiosk's camera.mp3")
+                    os.system("mpg123 " + "/home/smartbin/smartbin-esp32/db/sound/" + "facelogin.mp3")
                     lock.acquire()
                     # Call face login function in here
                     #
@@ -451,7 +450,7 @@ def task_facelogin(tag_login, tag_userdetail, tag_redeem, cam_source, face_sourc
                         print("userdetail=", userdetail)
                         json_obj = json.dumps(userdetail, indent=4)
                         r.publish(tag_userdetail, json_obj)
-                        playsound("/home/smartbin/smartbin-esp32/db/sound/" + "Login Success!.mp3")
+                        os.system("mpg123 " + "/home/smartbin/smartbin-esp32/db/sound/" + "login-success.mp3")
                     lock.release()
 
             elif message['channel'] == bytes(tag_redeem, 'utf-8'):
@@ -538,13 +537,13 @@ def face_compare(face_input, face_ref_encodings, face_names):
 
 def announce_objclass(objclass):
     if objclass == "coldcup":
-        playsound("/home/smartbin/smartbin-esp32/db/sound/" + "Success! Coldcup.mp3")
+        os.system("mpg123 " + "/home/smartbin/smartbin-esp32/db/sound/" + "success-coldcup.mp3")
     elif objclass == "hotcup":
-        playsound("/home/smartbin/smartbin-esp32/db/sound/" + "Success! Hotcup.mp3")
+        os.system("mpg123 " + "/home/smartbin/smartbin-esp32/db/sound/" + "success-hotcup.mp3")
     elif objclass == "other":
-        playsound("/home/smartbin/smartbin-esp32/db/sound/" + "Success! Other type.mp3")
+        os.system("mpg123 " + "/home/smartbin/smartbin-esp32/db/sound/" + "success-other.mp3")
     else:
-        playsound("/home/smartbin/smartbin-esp32/db/sound/" + "NotAmazonProduct.mp3")
+        os.system("mpg123 " + "/home/smartbin/smartbin-esp32/db/sound/" + "not-amazon.mp3")
 
 def calcReward(objclass):
     pts=0
@@ -575,10 +574,10 @@ def calcRedeem(userdetail, redeem_type):
             userdetail['Rewards'] -= 10
             userdetail['Total'] += 10
             send_email(userdetail)
-        playsound("/home/smartbin/smartbin-esp32/db/sound/" + "Redeem! Sending the code to your email.mp3")
+        os.system("mpg123 " + "/home/smartbin/smartbin-esp32/db/sound/" + "redeem-success-send-to-email.mp3")
     else:
         print("Cannot redeem, Rewards is less than 10")
-        playsound("/home/smartbin/smartbin-esp32/db/sound/" + "Cannot Redeem, Not enough points.mp3")
+        os.system("mpg123 " + "/home/smartbin/smartbin-esp32/db/sound/" + "cannot-redeem.mp3")
 
     return userdetail
 
