@@ -12,4 +12,4 @@ npm start &
 sleep 60
 echo "setup smartbin worker"
 cd /home/smartbin/smartbin-esp32/object-detection
-/bin/python3 yolo-smartbin.py -s cam -c config.json -d false >> /home/noah/log.txt 2>&1
+/bin/python3 yolo-smartbin.py -s cam -c config.json -d false >> /home/smartbin/log.txt 2>&1
