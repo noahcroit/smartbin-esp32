@@ -436,7 +436,7 @@ def task_facelogin(tag_login, tag_userdetail, tag_redeem, cam_source, face_sourc
             if message['channel'] == bytes(tag_login, 'utf-8'):
                 if message['data'] == b'1':
                     print("activate face login")
-                    os.system("mpg123 " + "/home/smartbin/smartbin-esp32/db/sound/" + "facelogin.mp3")
+                    mp3playsound("/home/smartbin/smartbin-esp32/db/sound/" + "facelogin.mp3")
                     lock.acquire()
                     # Call face login function in here
                     #
@@ -450,7 +450,7 @@ def task_facelogin(tag_login, tag_userdetail, tag_redeem, cam_source, face_sourc
                         print("userdetail=", userdetail)
                         json_obj = json.dumps(userdetail, indent=4)
                         r.publish(tag_userdetail, json_obj)
-                        os.system("mpg123 " + "/home/smartbin/smartbin-esp32/db/sound/" + "login-success.mp3")
+                        mp3playersound("/home/smartbin/smartbin-esp32/db/sound/" + "login-success.mp3")
                     lock.release()
 
             elif message['channel'] == bytes(tag_redeem, 'utf-8'):
@@ -537,13 +537,13 @@ def face_compare(face_input, face_ref_encodings, face_names):
 
 def announce_objclass(objclass):
     if objclass == "coldcup":
-        os.system("mpg123 " + "/home/smartbin/smartbin-esp32/db/sound/" + "success-coldcup.mp3")
+        mp3playsound("/home/smartbin/smartbin-esp32/db/sound/" + "success-coldcup.mp3")
     elif objclass == "hotcup":
-        os.system("mpg123 " + "/home/smartbin/smartbin-esp32/db/sound/" + "success-hotcup.mp3")
+        mp3playsound("/home/smartbin/smartbin-esp32/db/sound/" + "success-hotcup.mp3")
     elif objclass == "other":
-        os.system("mpg123 " + "/home/smartbin/smartbin-esp32/db/sound/" + "success-other.mp3")
+        mp3playsound("/home/smartbin/smartbin-esp32/db/sound/" + "success-other.mp3")
     else:
-        os.system("mpg123 " + "/home/smartbin/smartbin-esp32/db/sound/" + "not-amazon.mp3")
+        mp3playsound("/home/smartbin/smartbin-esp32/db/sound/" + "not-amazon.mp3")
 
 def calcReward(objclass):
     pts=0
@@ -574,10 +574,10 @@ def calcRedeem(userdetail, redeem_type):
             userdetail['Rewards'] -= 10
             userdetail['Total'] += 10
             send_email(userdetail)
-        os.system("mpg123 " + "/home/smartbin/smartbin-esp32/db/sound/" + "redeem-success-send-to-email.mp3")
+        mp3playsound("/home/smartbin/smartbin-esp32/db/sound/" + "redeem-success-send-to-email.mp3")
     else:
         print("Cannot redeem, Rewards is less than 10")
-        os.system("mpg123 " + "/home/smartbin/smartbin-esp32/db/sound/" + "cannot-redeem.mp3")
+        mp3playsound("/home/smartbin/smartbin-esp32/db/sound/" + "cannot-redeem.mp3")
 
     return userdetail
 
@@ -681,6 +681,10 @@ def send_email(userdetail):
         # Close the SMTP server connection
         server.quit()
 
+def mp3playsound(mp3file):
+    # using os native
+    player_cmd = "mpg123 -o alsa:hw:1,0 -f 30000"
+    os.system(player_cmd + " " + mp3file)
 
 
 if __name__ == "__main__":
