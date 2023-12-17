@@ -5,33 +5,33 @@ smartbin prototyping with esp32 as sorting mechanical controller, Interface wtih
 ESP32 is used for microcontroller, in folder bin-mechanic-esp32. ESP-IDF is used for development environment.
 To build and flash the firmware,
 ```
-cd bin-mechanic-esp32
+$ cd bin-mechanic-esp32
 
 # To setup WIFI & MQTT Broker
-idf.py menuconfig
+$ idf.py menuconfig
 
 # To build & flash
-idf.py build
-idf.py flash -p /dev/ttyUSB0
+$ idf.py build
+$ idf.py flash -p /dev/ttyUSB0
 ```
 
 ## YOLO worker for garbage classifier
 Pre-built OpenCV-python can be used, Run on Ubuntu server.
 ```
-sudo apt-get install python3-opencv
+$ sudo apt-get install python3-opencv
 ```
 
 To run worker
 ```
-cd object-detection
-python yolo-smartbin.py -s cam -c config.json -d true
+$ cd object-detection
+$ python yolo-smartbin.py -s cam -c config.json -d true
 ```
 Worker will look for a trained YOLOv4 model file (.cfg) from Darknet framework (https://github.com/AlexeyAB/darknet).
 The config.json file is used for select the camera url, redis tag, db etc.
 
 Testing camera with ffmpeg or cheese
 ```
-ffmpeg -f v4l2 -framerate 30 -video_size 1280x720 -input_format mjpeg -i /dev/v4l/by-id/your-camera-id out.mkv
+$ ffmpeg -f v4l2 -framerate 30 -video_size 1280x720 -input_format mjpeg -i /dev/v4l/by-id/your-camera-id out.mkv
 ```
 
 ### face recognition for smartbin login
@@ -54,17 +54,24 @@ $ pip3 install face-recognition
 mpg123 player is used to play the sample speeches in form of mp3 files. The player is called inside YOLO worker in native way (os module).
 To install mpg123 player,
 ```
-sudo apt-get update
-sudo apt-get install mpg123
+$ sudo apt-get update
+$ sudo apt-get install mpg123
 ```
 To test player,
 ```
-mpg123 -o alsa:hw:1,0 -f 30000
+$ mpg123 -o alsa:hw:1,0 -f 30000
 ```
 -o => audio output target
 -f => scale of volume control (0 - 32768)
 
 
+### Startup script
+Use crontab to run startup script smartbin-startup.sh.
+```
+$ crontab -e
+```
+Then, put this line after run "crontab -e" command.
+@reboot /bin/bash /home/smartbin/smartbin-esp32/smartbin-startup.sh
 
 
 
