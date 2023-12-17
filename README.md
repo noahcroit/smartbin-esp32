@@ -51,10 +51,18 @@ $ pip3 install face-recognition
 ```
 
 ### play sound in smartbin
-playsound module is used to play the sample speech.
+mpg123 player is used to play the sample speeches in form of mp3 files. The player is called inside YOLO worker in native way (os module).
+To install mpg123 player,
 ```
-pip3 install playsound
+sudo apt-get update
+sudo apt-get install mpg123
 ```
+To test player,
+```
+mpg123 -o alsa:hw:1,0 -f 30000
+```
+-o => audio output target
+-f => scale of volume control (0 - 32768)
 
 
 
