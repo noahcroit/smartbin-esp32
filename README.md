@@ -74,5 +74,17 @@ Then, put this line after run "crontab -e" command.
 @reboot /bin/bash /home/smartbin/smartbin-esp32/smartbin-startup.sh
 
 
+### Web GUI for Smartbin Kiosk
+UI components will not be in this repository. Only software dependencies for this Kiosk.
+Dependencies consist of
+- nodejs
+- npm
+- redis server
+```
+$ sudo apt install nodejs npm
+$ sudo apt install redis-server
+$ sudo systemctl status redis-server
+```
+
 
 
