@@ -32,6 +32,11 @@ def on_message(client, userdata, msg):
         if str(msg.payload) == "b\'Y\'":
             print("Requested!")
             snapshot_isrun = True
+    elif msg.topic == "Alarm":
+        if str(msg.payload) == "b\'W\'":
+            print("********* Overweight Alarm!")
+            mp3playsound("/home/smartbin/smartbin-esp32/db/sound/" + "overweight.mp3")
+
     else:
         print("Topic is not in the list of smartbin")
 
@@ -47,6 +52,7 @@ def task_mqttsub(q_yolo_esp32):
     client.connect(broker, port, 60)
     print("Run MQTT sub")
     client.subscribe("YOLO/Request?")
+    client.subscribe("Alarm")
     client.loop_start()
 
     while worker_isrun:
@@ -450,7 +456,7 @@ def task_facelogin(tag_login, tag_userdetail, tag_redeem, cam_source, face_sourc
                         print("userdetail=", userdetail)
                         json_obj = json.dumps(userdetail, indent=4)
                         r.publish(tag_userdetail, json_obj)
-                        mp3playersound("/home/smartbin/smartbin-esp32/db/sound/" + "login-success.mp3")
+                        mp3playsound("/home/smartbin/smartbin-esp32/db/sound/" + "login-success.mp3")
                     lock.release()
 
             elif message['channel'] == bytes(tag_redeem, 'utf-8'):
