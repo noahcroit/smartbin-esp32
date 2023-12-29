@@ -1,0 +1,30 @@
+menu "Smartbin Configuration"
+
+    config BROKER_URL
+        string "Broker URL"
+        default ""
+        help
+            URL of the broker to connect to
+
+    config BROKER_URL_FROM_STDIN
+        bool
+        default y if BROKER_URL = "FROM_STDIN"
+
+    config HX711_PD_SCK_GPIO
+        int "PD/SCK GPIO number"
+        default 4 if IDF_TARGET_ESP8266 || IDF_TARGET_ESP32C3
+        default 18 if IDF_TARGET_ESP32 || IDF_TARGET_ESP32S2 || IDF_TARGET_ESP32S3
+        help
+            GPIO number connected to PD/SCK pin
+
+    config HX711_DOUT_GPIO
+        int "DOUT GPIO number"
+        default 5 if IDF_TARGET_ESP8266 || IDF_TARGET_ESP32C3
+        default 19 if IDF_TARGET_ESP32 || IDF_TARGET_ESP32S2 || IDF_TARGET_ESP32S3
+        help
+            GPIO number connected to DOUT pin
+
+    config HX711_AVG_TIMES
+        int "Samples to average"
+        default 5
+endmenu
