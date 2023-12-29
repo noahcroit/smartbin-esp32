@@ -330,10 +330,13 @@ CONFIG_PARTITION_TABLE_MD5=y
 # end of Partition Table
 
 #
-# Example Configuration
+# Smartbin Configuration
 #
-CONFIG_BROKER_URL="mqtt://30.100.10.44"
-# end of Example Configuration
+CONFIG_BROKER_URL="mqtt://30.100.10.53"
+CONFIG_HX711_PD_SCK_GPIO=32
+CONFIG_HX711_DOUT_GPIO=33
+CONFIG_HX711_AVG_TIMES=5
+# end of Smartbin Configuration
 
 #
 # Example Connection Configuration
@@ -1570,6 +1573,12 @@ CONFIG_WIFI_PROV_AUTOSTOP_TIMEOUT=30
 CONFIG_WIFI_PROV_STA_ALL_CHANNEL_SCAN=y
 # CONFIG_WIFI_PROV_STA_FAST_SCAN is not set
 # end of Wi-Fi Provisioning Manager
+
+#
+# VL53L0X
+#
+# CONFIG_VL53L0X_DEBUG is not set
+# end of VL53L0X
 # end of Component config
 
 # Deprecated options for backward compatibility

@@ -26,6 +26,7 @@
 #include "lid_opener.h"
 #include "sort_servo.h"
 #include "vl53l0x.h"
+#include "hx711.h"
 
 /*
  * Define for SmartBin
@@ -46,6 +47,7 @@
 #define MQTT_CONNECTED          1
 #define MQTT_TOPIC_YOLOREQUEST  "YOLO/Request?"
 #define MQTT_TOPIC_YOLORESULT   "YOLO/Result"
+#define MQTT_TOPIC_ALARM        "Alarm"
 #define SERVO_ANGLE_L_COLDCUP   -30
 #define SERVO_ANGLE_R_COLDCUP   -30
 #define SERVO_ANGLE_L_HOTCUP    40
@@ -54,7 +56,8 @@
 #define SERVO_ANGLE_R_OTHER     0
 #define SERVO_ANGLE_L_IDLE      0
 #define SERVO_ANGLE_R_IDLE      0
-#define ACTIVATE_DISTANCE_MM    180
+#define OVERWEIGHT_THRESHOLD    (int32_t)150000
+#define ACTIVATE_DISTANCE_MM    210
 #define DISTANCE_SENSOR_I2C_PORT    I2C_NUM_0  
 #define DISTANCE_SENSOR_I2C_PIN_SCL GPIO_NUM_22  
 #define DISTANCE_SENSOR_I2C_PIN_SDA GPIO_NUM_21  
@@ -74,6 +77,7 @@ typedef struct{
 }smartbin_t;
 
 int isObjectPresent(smartbin_t *bin);
+int isObjectOverweight(smartbin_t *bin);
 int isYoloReady(smartbin_t *bin);
 
 /* 
@@ -84,9 +88,12 @@ smartbin_t smartbin;
 esp_mqtt_client_handle_t client = NULL;
 char buf_yolo_request[10];
 char buf_yolo_result[10];
+char buf_alarm[10];
 QueueHandle_t queue_yolo_request;
 QueueHandle_t queue_yolo_result;
+QueueHandle_t queue_alarm;
 uint16_t distance_mm=1000;
+int32_t weight=0;
 
 
 
@@ -219,7 +226,11 @@ static void mqtt_app_start(void)
 
 
 
-void task_readObjectDistance(){
+void task_readObjectSensor(){
+    /*
+     * Distance sensor VL53L0X configuration
+     *
+     */
     ESP_LOGI(TAG, "VL53L0X Configuration ***");
     vl53l0x_t *v_sensor;
     v_sensor = vl53l0x_config(DISTANCE_SENSOR_I2C_PORT, 
@@ -237,11 +248,40 @@ void task_readObjectDistance(){
         vTaskDelay(100 / portTICK_PERIOD_MS);
         vl53l0x_startContinuous(v_sensor, 1000);
     }
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    
+    /*
+     * Weight sensor amplifier HX711 configuration
+     *
+     */
 
+    hx711_t dev = {
+        .dout = CONFIG_HX711_DOUT_GPIO,
+        .pd_sck = CONFIG_HX711_PD_SCK_GPIO,
+        .gain = HX711_GAIN_A_64
+    };
+    // initialize device
+    ESP_ERROR_CHECK(hx711_init(&dev));
+
+
+
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
     while (true){
+        // read object distance
         distance_mm = vl53l0x_readRangeContinuousMillimeters(v_sensor);
-        ESP_LOGI(TAG, "object distance=%d", distance_mm);
+        
+        // read object weight
+        esp_err_t r = hx711_wait(&dev, 500);
+        if (r != ESP_OK){
+            ESP_LOGE(TAG, "Device not found: %d (%s)\n", r, esp_err_to_name(r));
+            continue;
+        }
+        r = hx711_read_average(&dev, CONFIG_HX711_AVG_TIMES, &weight);
+        if (r != ESP_OK){
+            ESP_LOGE(TAG, "Could not read data: %d (%s)\n", r, esp_err_to_name(r));
+            continue;
+        }
+
+        ESP_LOGI(TAG, "object distance=%d, object weight=%d", distance_mm, weight);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
@@ -336,16 +376,28 @@ void task_binstatemachine(){
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
+    int overweight_cnt=0;
+
     while (true){
         switch (smartbin.binState){
             case BINSTATE_IDLE:
                 ESP_LOGI(TAG, "IDLE STATE");
                 if (isObjectPresent(&smartbin)){
-                    // Move to YOLO state
-                    smartbin.binState = BINSTATE_YOLO;
-                    gpio_set_level(LED_BINSTATE_IDLE, 1);
-                    gpio_set_level(LED_BINSTATE_YOLO, 0);
-                    ESP_LOGI(TAG, "GO TO YOLO STATE");
+                    if(isObjectOverweight(&smartbin)){
+                        overweight_cnt++;
+                        if(overweight_cnt > 5){
+                            xQueueSend(queue_alarm, (void*)"W", (TickType_t)0);
+                            vTaskDelay(2000 / portTICK_PERIOD_MS);
+                            overweight_cnt = 0;
+                        }
+                    }
+                    else{
+                        // Move to YOLO state
+                        smartbin.binState = BINSTATE_YOLO;
+                        gpio_set_level(LED_BINSTATE_IDLE, 1);
+                        gpio_set_level(LED_BINSTATE_YOLO, 0);
+                        ESP_LOGI(TAG, "GO TO YOLO STATE");
+                    }
                 }
                 break;
 
@@ -468,6 +520,7 @@ void task_mqtt_connection(){
         if (smartbin.mqttConnected == MQTT_DISCONNECTED){
             ESP_ERROR_CHECK(example_connect());
             mqtt_app_start();
+            vTaskDelay(3000 / portTICK_PERIOD_MS);
         }
         else{
             /*
@@ -478,6 +531,15 @@ void task_mqtt_connection(){
                 xQueueReceive(queue_yolo_request, &(rxBuf), (TickType_t)10);
                 if (rxBuf == 'Y'){
                     msg_id = esp_mqtt_client_publish(client, MQTT_TOPIC_YOLOREQUEST, "Y", 0, 0, 0);
+                    ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
+                    rxBuf = 'N';
+                }
+            }
+            
+            if (queue_alarm != 0){
+                xQueueReceive(queue_alarm, &(rxBuf), (TickType_t)10);
+                if (rxBuf == 'W'){
+                    msg_id = esp_mqtt_client_publish(client, MQTT_TOPIC_ALARM, "W", 0, 0, 0);
                     ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
                     rxBuf = 'N';
                 }
@@ -493,6 +555,7 @@ void app_main(void)
     // create message queue for YOLO Request
     queue_yolo_request = xQueueCreate(5, sizeof(buf_yolo_request));
     queue_yolo_result = xQueueCreate(5, sizeof(buf_yolo_result));
+    queue_alarm = xQueueCreate(5, sizeof(buf_alarm));
 
     // task handler
     TaskHandle_t task_handler_1 = NULL;
@@ -500,7 +563,7 @@ void app_main(void)
     TaskHandle_t task_handler_3 = NULL;
 
     // create tasks
-    xTaskCreate(&task_readObjectDistance, "task object detection sensor", 4096, NULL, 5, &task_handler_3);
+    xTaskCreate(&task_readObjectSensor, "task object detection sensor", 4096, NULL, 5, &task_handler_3);
     xTaskCreate(&task_mqtt_connection, "task mqtt check connection", 4096, NULL, 5, &task_handler_1);
     xTaskCreate(&task_binstatemachine, "task smartbin", 4096, NULL, 5, &task_handler_2);
 
@@ -526,6 +589,14 @@ int isObjectPresent(smartbin_t *bin){
 #endif
     if(distance_mm < ACTIVATE_DISTANCE_MM){
         ESP_LOGI(TAG, "Presense!");
+        return 1;
+    }
+    return 0;
+}
+
+int isObjectOverweight(smartbin_t *bin){
+    if(weight > OVERWEIGHT_THRESHOLD){
+        ESP_LOGI(TAG, "Alarm, Overweight!");
         return 1;
     }
     return 0;
