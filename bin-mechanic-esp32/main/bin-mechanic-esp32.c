@@ -56,7 +56,7 @@
 #define SERVO_ANGLE_R_OTHER     0
 #define SERVO_ANGLE_L_IDLE      0
 #define SERVO_ANGLE_R_IDLE      0
-#define OVERWEIGHT_THRESHOLD    (int32_t)150000
+#define OVERWEIGHT_THRESHOLD    (int32_t)5000000
 #define ACTIVATE_DISTANCE_MM    210
 #define DISTANCE_SENSOR_I2C_PORT    I2C_NUM_0  
 #define DISTANCE_SENSOR_I2C_PIN_SCL GPIO_NUM_22  
@@ -77,8 +77,9 @@ typedef struct{
 }smartbin_t;
 
 int isObjectPresent(smartbin_t *bin);
-int isObjectOverweight(smartbin_t *bin);
+int isObjectOverweight(hx711_t *dev, int32_t weight_noload);
 int isYoloReady(smartbin_t *bin);
+int UpdateWeightNoLoad(hx711_t *dev, int32_t *weight_noload);
 
 /* 
  * Global Var for smartbin
@@ -93,7 +94,6 @@ QueueHandle_t queue_yolo_request;
 QueueHandle_t queue_yolo_result;
 QueueHandle_t queue_alarm;
 uint16_t distance_mm=1000;
-int32_t weight=0;
 
 
 
@@ -126,22 +126,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
         smartbin.mqttConnected = MQTT_CONNECTED;
         gpio_set_level(LED_MQTTCONNECTED, 0);
-
-        //msg_id = esp_mqtt_client_publish(client, "/topic/qos1", "data_3", 0, 1, 0);
-        //ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
-
-        //msg_id = esp_mqtt_client_subscribe(client, "/topic/qos0", 0);
-        //ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
-
-        //msg_id = esp_mqtt_client_subscribe(client, "/topic/qos1", 1);
-        //ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
-
-        //msg_id = esp_mqtt_client_unsubscribe(client, "/topic/qos1");
-        //ESP_LOGI(TAG, "sent unsubscribe successful, msg_id=%d", msg_id);
-
-        /* Subscribe of every tags should be here, after connection is success
-         *
-         */
         msg_id = esp_mqtt_client_subscribe(client, MQTT_TOPIC_YOLORESULT, 0);
         ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
         break;
@@ -249,39 +233,10 @@ void task_readObjectSensor(){
         vl53l0x_startContinuous(v_sensor, 1000);
     }
     
-    /*
-     * Weight sensor amplifier HX711 configuration
-     *
-     */
-
-    hx711_t dev = {
-        .dout = CONFIG_HX711_DOUT_GPIO,
-        .pd_sck = CONFIG_HX711_PD_SCK_GPIO,
-        .gain = HX711_GAIN_A_64
-    };
-    // initialize device
-    ESP_ERROR_CHECK(hx711_init(&dev));
-
-
-
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     while (true){
         // read object distance
         distance_mm = vl53l0x_readRangeContinuousMillimeters(v_sensor);
-        
-        // read object weight
-        esp_err_t r = hx711_wait(&dev, 500);
-        if (r != ESP_OK){
-            ESP_LOGE(TAG, "Device not found: %d (%s)\n", r, esp_err_to_name(r));
-            continue;
-        }
-        r = hx711_read_average(&dev, CONFIG_HX711_AVG_TIMES, &weight);
-        if (r != ESP_OK){
-            ESP_LOGE(TAG, "Could not read data: %d (%s)\n", r, esp_err_to_name(r));
-            continue;
-        }
-
-        ESP_LOGI(TAG, "object distance=%d, object weight=%d", distance_mm, weight);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
@@ -311,7 +266,6 @@ void task_binstatemachine(){
     gpio_set_level(LED_BINSTATE_IDLE, 1);
     gpio_set_level(LED_BINSTATE_YOLO, 1);
     gpio_set_level(LED_BINSTATE_SORT, 1);
-
 
     /*
      * Lid Opener Configuration
@@ -345,6 +299,18 @@ void task_binstatemachine(){
     sort_servo_disable(&servo_r);
     
     /*
+     * Weight sensor amplifier HX711 configuration
+     *
+     */
+    hx711_t hx711_sensor = {
+        .dout = CONFIG_HX711_DOUT_GPIO,
+        .pd_sck = CONFIG_HX711_PD_SCK_GPIO,
+        .gain = HX711_GAIN_A_64
+    };
+    // initialize device
+    ESP_ERROR_CHECK(hx711_init(&hx711_sensor));
+    
+    /*
      * For testing only : Button for simulation of Presense sensor and YOLO result
      *
      */
@@ -363,7 +329,6 @@ void task_binstatemachine(){
     ESP_LOGI(TAG, "[APP] Startup..");
     ESP_LOGI(TAG, "[APP] Free memory: %d bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "[APP] IDF version: %s", esp_get_idf_version());
-
     esp_log_level_set("*", ESP_LOG_INFO);
     esp_log_level_set("mqtt_client", ESP_LOG_VERBOSE);
     esp_log_level_set("MQTT_EXAMPLE", ESP_LOG_VERBOSE);
@@ -371,25 +336,31 @@ void task_binstatemachine(){
     esp_log_level_set("esp-tls", ESP_LOG_VERBOSE);
     esp_log_level_set("TRANSPORT", ESP_LOG_VERBOSE);
     esp_log_level_set("outbox", ESP_LOG_VERBOSE);
-
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    int overweight_cnt=0;
+    /* 
+     * Initialize for weight drift offset process
+     *
+     */
+    int8_t weight_drift_tick=0;
+    int32_t weight_noload;
+    UpdateWeightNoLoad(&hx711_sensor, &weight_noload);
 
+    /*
+     * state-machine loop
+     *
+     */
     while (true){
         switch (smartbin.binState){
             case BINSTATE_IDLE:
                 ESP_LOGI(TAG, "IDLE STATE");
                 if (isObjectPresent(&smartbin)){
-                    if(isObjectOverweight(&smartbin)){
-                        overweight_cnt++;
-                        if(overweight_cnt > 5){
-                            xQueueSend(queue_alarm, (void*)"W", (TickType_t)0);
-                            vTaskDelay(2000 / portTICK_PERIOD_MS);
-                            overweight_cnt = 0;
-                        }
+                    // check the weight of 
+                    if(isObjectOverweight(&hx711_sensor, weight_noload)){
+                        xQueueSend(queue_alarm, (void*)"W", (TickType_t)0);
+                        vTaskDelay(1000 / portTICK_PERIOD_MS);
                     }
                     else{
                         // Move to YOLO state
@@ -397,6 +368,13 @@ void task_binstatemachine(){
                         gpio_set_level(LED_BINSTATE_IDLE, 1);
                         gpio_set_level(LED_BINSTATE_YOLO, 0);
                         ESP_LOGI(TAG, "GO TO YOLO STATE");
+                    }
+                }
+                else{
+                    if(weight_drift_tick >= 50){
+                        // update weight at no load (use for drift-offset)
+                        UpdateWeightNoLoad(&hx711_sensor, &weight_noload);
+                        weight_drift_tick=0;
                     }
                 }
                 break;
@@ -499,7 +477,6 @@ void task_binstatemachine(){
                 gpio_set_level(LED_BINSTATE_IDLE, 0);
                 break;
         }
-
         vTaskDelay(200 / portTICK_PERIOD_MS);
     }
 }
@@ -508,10 +485,6 @@ void task_mqtt_connection(){
 
     smartbin.mqttConnected = MQTT_DISCONNECTED; 
     vTaskDelay(1000 / portTICK_PERIOD_MS);
-    /* This helper function configures Wi-Fi or Ethernet, as selected in menuconfig.
-     * Read "Establishing Wi-Fi or Ethernet Connection" section in
-     * examples/protocols/README.md for more information about this function.
-     */
     
     int msg_id;
     char rxBuf='N';
@@ -594,10 +567,37 @@ int isObjectPresent(smartbin_t *bin){
     return 0;
 }
 
-int isObjectOverweight(smartbin_t *bin){
-    if(weight > OVERWEIGHT_THRESHOLD){
+int isObjectOverweight(hx711_t *dev, int32_t weight_noload){
+    int32_t weight;
+
+    // read object weight
+    esp_err_t r = hx711_wait(dev, 500);
+    if (r != ESP_OK){
+        ESP_LOGE(TAG, "Device not found: %d (%s)\n", r, esp_err_to_name(r));
+    }
+    r = hx711_read_average(dev, CONFIG_HX711_AVG_TIMES, &weight);
+    if (r != ESP_OK){
+        ESP_LOGE(TAG, "Could not read data: %d (%s)\n", r, esp_err_to_name(r));
+    }
+
+    if(weight - weight_noload > OVERWEIGHT_THRESHOLD){
         ESP_LOGI(TAG, "Alarm, Overweight!");
         return 1;
+    }
+    return 0;
+}
+
+int UpdateWeightNoLoad(hx711_t *dev, int32_t *weight_noload){
+    // read weight at no load
+    esp_err_t r = hx711_wait(dev, 500);
+    if (r != ESP_OK){
+        ESP_LOGE(TAG, "Device not found: %d (%s)\n", r, esp_err_to_name(r));
+        return -1;
+    }
+    r = hx711_read_average(dev, CONFIG_HX711_AVG_TIMES, weight_noload);
+    if (r != ESP_OK){
+        ESP_LOGE(TAG, "Could not read data: %d (%s)\n", r, esp_err_to_name(r));
+        return -1;
     }
     return 0;
 }
