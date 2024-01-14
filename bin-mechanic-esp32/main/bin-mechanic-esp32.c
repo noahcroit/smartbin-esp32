@@ -56,7 +56,8 @@
 #define SERVO_ANGLE_R_OTHER     0
 #define SERVO_ANGLE_L_IDLE      0
 #define SERVO_ANGLE_R_IDLE      0
-#define OVERWEIGHT_THRESHOLD    (int32_t)5000000
+#define OVERWEIGHT_THRESHOLD        (int32_t)100000
+#define PRESENSE_WEIGHT_THRESHOLD   (int32_t)40000
 #define ACTIVATE_DISTANCE_MM    210
 #define DISTANCE_SENSOR_I2C_PORT    I2C_NUM_0  
 #define DISTANCE_SENSOR_I2C_PIN_SCL GPIO_NUM_22  
@@ -74,12 +75,13 @@ typedef struct{
     int8_t mqttConnected; 
     int8_t yoloReady;
     char objClass;
+    uint16_t distance_mm;
+    int32_t weight;
+    
 }smartbin_t;
 
 int isObjectPresent(smartbin_t *bin);
-int isObjectOverweight(hx711_t *dev, int32_t weight_noload);
 int isYoloReady(smartbin_t *bin);
-int UpdateWeightNoLoad(hx711_t *dev, int32_t *weight_noload);
 
 /* 
  * Global Var for smartbin
@@ -93,7 +95,6 @@ char buf_alarm[10];
 QueueHandle_t queue_yolo_request;
 QueueHandle_t queue_yolo_result;
 QueueHandle_t queue_alarm;
-uint16_t distance_mm=1000;
 
 
 
@@ -210,7 +211,8 @@ static void mqtt_app_start(void)
 
 
 
-void task_readObjectSensor(){
+void task_readObject()
+{
     /*
      * Distance sensor VL53L0X configuration
      *
@@ -233,23 +235,44 @@ void task_readObjectSensor(){
         vl53l0x_startContinuous(v_sensor, 1000);
     }
     
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    /*
+     * Weight sensor amplifier HX711 configuration
+     *
+     */
+    int32_t weight_avg;
+    hx711_t hx711_sensor = {
+        .dout = CONFIG_HX711_DOUT_GPIO,
+        .pd_sck = CONFIG_HX711_PD_SCK_GPIO,
+        .gain = HX711_GAIN_A_64
+    };
+    ESP_ERROR_CHECK(hx711_init(&hx711_sensor));
+
     while (true){
-        // read object distance
-        distance_mm = vl53l0x_readRangeContinuousMillimeters(v_sensor);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        if(smartbin.binState == BINSTATE_IDLE){
+            // read object distance
+            smartbin.distance_mm = vl53l0x_readRangeContinuousMillimeters(v_sensor);
+
+            // read object weight with moving average
+            esp_err_t r = hx711_wait(&hx711_sensor, 500);
+            if (r != ESP_OK){
+                ESP_LOGE(TAG, "Device not found: %d (%s)\n", r, esp_err_to_name(r));
+            }
+            r = hx711_read_average(&hx711_sensor, CONFIG_HX711_AVG_TIMES, &weight_avg);
+            if (r != ESP_OK){
+                ESP_LOGE(TAG, "Could not read data: %d (%s)\n", r, esp_err_to_name(r));
+            }
+            smartbin.weight = weight_avg;
+            
+            // print sensor values
+            ESP_LOGI(TAG, "distance=%d, weight=%d", smartbin.distance_mm, smartbin.weight);
+        }
+
+        vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 }
 
-void task_binstatemachine(){
-    
-    /*
-     * Initialize Smartbin Params
-     *
-     */
-    smartbin.binState = BINSTATE_IDLE;
-    smartbin.yoloReady = 0;
-
+void task_binstatemachine()
+{    
     /*
      * Initialize LEDs
      *
@@ -299,18 +322,6 @@ void task_binstatemachine(){
     sort_servo_disable(&servo_r);
     
     /*
-     * Weight sensor amplifier HX711 configuration
-     *
-     */
-    hx711_t hx711_sensor = {
-        .dout = CONFIG_HX711_DOUT_GPIO,
-        .pd_sck = CONFIG_HX711_PD_SCK_GPIO,
-        .gain = HX711_GAIN_A_64
-    };
-    // initialize device
-    ESP_ERROR_CHECK(hx711_init(&hx711_sensor));
-    
-    /*
      * For testing only : Button for simulation of Presense sensor and YOLO result
      *
      */
@@ -339,14 +350,7 @@ void task_binstatemachine(){
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-
-    /* 
-     * Initialize for weight drift offset process
-     *
-     */
-    int8_t weight_drift_tick=0;
-    int32_t weight_noload;
-    UpdateWeightNoLoad(&hx711_sensor, &weight_noload);
+    ESP_LOGI(TAG, "IDLE STATE");
 
     /*
      * state-machine loop
@@ -355,12 +359,11 @@ void task_binstatemachine(){
     while (true){
         switch (smartbin.binState){
             case BINSTATE_IDLE:
-                ESP_LOGI(TAG, "IDLE STATE");
                 if (isObjectPresent(&smartbin)){
-                    // check the weight of 
-                    if(isObjectOverweight(&hx711_sensor, weight_noload)){
+                    vTaskDelay(1000 / portTICK_PERIOD_MS);
+                    if (smartbin.weight > OVERWEIGHT_THRESHOLD){
                         xQueueSend(queue_alarm, (void*)"W", (TickType_t)0);
-                        vTaskDelay(1000 / portTICK_PERIOD_MS);
+                        vTaskDelay(3000 / portTICK_PERIOD_MS);
                     }
                     else{
                         // Move to YOLO state
@@ -368,13 +371,6 @@ void task_binstatemachine(){
                         gpio_set_level(LED_BINSTATE_IDLE, 1);
                         gpio_set_level(LED_BINSTATE_YOLO, 0);
                         ESP_LOGI(TAG, "GO TO YOLO STATE");
-                    }
-                }
-                else{
-                    if(weight_drift_tick >= 50){
-                        // update weight at no load (use for drift-offset)
-                        UpdateWeightNoLoad(&hx711_sensor, &weight_noload);
-                        weight_drift_tick=0;
                     }
                 }
                 break;
@@ -388,6 +384,7 @@ void task_binstatemachine(){
                 timeout_yolo = TIMEOUT_SEC_YOLO;
                 xQueueSend(queue_yolo_request, (void*)"Y", (TickType_t)0);
                 ESP_LOGI(TAG, "Publish YOLO request, Wait for YOLO...");
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
                 while (!isYoloReady(&smartbin)){
                     vTaskDelay(1000 / portTICK_PERIOD_MS);
                     timeout_yolo--;
@@ -400,6 +397,7 @@ void task_binstatemachine(){
                     gpio_set_level(LED_BINSTATE_YOLO, 1);
                     gpio_set_level(LED_BINSTATE_IDLE, 0);
                     xQueueReset(queue_yolo_result);
+                    xQueueReset(queue_yolo_request);
                     ESP_LOGI(TAG, "Timeout, GO TO IDLE");
                 }
                 else{
@@ -481,11 +479,8 @@ void task_binstatemachine(){
     }
 }
 
-void task_mqtt_connection(){
-
-    smartbin.mqttConnected = MQTT_DISCONNECTED; 
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    
+void task_mqtt_connection()
+{
     int msg_id;
     char rxBuf='N';
 
@@ -525,6 +520,16 @@ void task_mqtt_connection(){
 
 void app_main(void)
 {
+    /*
+     * Initialize Smartbin Params
+     *
+     */
+    smartbin.binState = BINSTATE_IDLE;
+    smartbin.yoloReady = 0;
+    smartbin.mqttConnected = MQTT_DISCONNECTED; 
+    smartbin.distance_mm=1000;
+    smartbin.weight=0;
+
     // create message queue for YOLO Request
     queue_yolo_request = xQueueCreate(5, sizeof(buf_yolo_request));
     queue_yolo_result = xQueueCreate(5, sizeof(buf_yolo_result));
@@ -536,8 +541,8 @@ void app_main(void)
     TaskHandle_t task_handler_3 = NULL;
 
     // create tasks
-    xTaskCreate(&task_readObjectSensor, "task object detection sensor", 4096, NULL, 5, &task_handler_3);
-    xTaskCreate(&task_mqtt_connection, "task mqtt check connection", 4096, NULL, 5, &task_handler_1);
+    xTaskCreate(&task_mqtt_connection, "task mqtt check connection", 8000, NULL, 5, &task_handler_1);
+    xTaskCreate(&task_readObject, "task object detection sensor", 2048, NULL, 5, &task_handler_3);
     xTaskCreate(&task_binstatemachine, "task smartbin", 4096, NULL, 5, &task_handler_2);
 
     while (true){
@@ -560,44 +565,9 @@ int isObjectPresent(smartbin_t *bin){
     }
     return 0;
 #endif
-    if(distance_mm < ACTIVATE_DISTANCE_MM){
+    if((bin->distance_mm < ACTIVATE_DISTANCE_MM) || (bin->weight >= PRESENSE_WEIGHT_THRESHOLD)){
         ESP_LOGI(TAG, "Presense!");
         return 1;
-    }
-    return 0;
-}
-
-int isObjectOverweight(hx711_t *dev, int32_t weight_noload){
-    int32_t weight;
-
-    // read object weight
-    esp_err_t r = hx711_wait(dev, 500);
-    if (r != ESP_OK){
-        ESP_LOGE(TAG, "Device not found: %d (%s)\n", r, esp_err_to_name(r));
-    }
-    r = hx711_read_average(dev, CONFIG_HX711_AVG_TIMES, &weight);
-    if (r != ESP_OK){
-        ESP_LOGE(TAG, "Could not read data: %d (%s)\n", r, esp_err_to_name(r));
-    }
-
-    if(weight - weight_noload > OVERWEIGHT_THRESHOLD){
-        ESP_LOGI(TAG, "Alarm, Overweight!");
-        return 1;
-    }
-    return 0;
-}
-
-int UpdateWeightNoLoad(hx711_t *dev, int32_t *weight_noload){
-    // read weight at no load
-    esp_err_t r = hx711_wait(dev, 500);
-    if (r != ESP_OK){
-        ESP_LOGE(TAG, "Device not found: %d (%s)\n", r, esp_err_to_name(r));
-        return -1;
-    }
-    r = hx711_read_average(dev, CONFIG_HX711_AVG_TIMES, weight_noload);
-    if (r != ESP_OK){
-        ESP_LOGE(TAG, "Could not read data: %d (%s)\n", r, esp_err_to_name(r));
-        return -1;
     }
     return 0;
 }
