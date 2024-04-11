@@ -1,7 +1,7 @@
 menu "Smartbin Configuration"
 
-    config NO_YOLOSERVER_TEST
-        bool "No Yolo server test?"
+    config HW_TEST_ONLY
+        bool "hardware test only (without YOLO server connection)?"
         default n
 
     config BROKER_URL

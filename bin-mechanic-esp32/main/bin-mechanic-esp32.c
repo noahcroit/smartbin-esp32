@@ -56,9 +56,9 @@
 #define SERVO_ANGLE_R_OTHER     0
 #define SERVO_ANGLE_L_IDLE      0
 #define SERVO_ANGLE_R_IDLE      0
-#define OVERWEIGHT_THRESHOLD        (int32_t)100000
+#define OVERWEIGHT_THRESHOLD        (int32_t)70000
 #define PRESENSE_WEIGHT_THRESHOLD   (int32_t)40000
-#define ACTIVATE_DISTANCE_MM    210
+#define ACTIVATE_DISTANCE_MM    180
 #define DISTANCE_SENSOR_I2C_PORT    I2C_NUM_0  
 #define DISTANCE_SENSOR_I2C_PIN_SCL GPIO_NUM_22  
 #define DISTANCE_SENSOR_I2C_PIN_SDA GPIO_NUM_21  
@@ -264,10 +264,10 @@ void task_readObject()
             smartbin.weight = weight_avg;
             
             // print sensor values
-            ESP_LOGI(TAG, "distance=%d, weight=%d", smartbin.distance_mm, smartbin.weight);
+            //ESP_LOGI(TAG, "distance=%d, weight=%d", smartbin.distance_mm, smartbin.weight);
         }
 
-        vTaskDelay(500 / portTICK_PERIOD_MS);
+        vTaskDelay(750 / portTICK_PERIOD_MS);
     }
 }
 
@@ -366,11 +366,18 @@ void task_binstatemachine()
                         vTaskDelay(3000 / portTICK_PERIOD_MS);
                     }
                     else{
+#ifdef CONFIG_HW_TEST_ONLY
                         // Move to YOLO state
                         smartbin.binState = BINSTATE_YOLO;
                         gpio_set_level(LED_BINSTATE_IDLE, 1);
                         gpio_set_level(LED_BINSTATE_YOLO, 0);
                         ESP_LOGI(TAG, "GO TO YOLO STATE");
+#else
+                        // Move to sort state without wait for YOLO
+                        smartbin.binState = BINSTATE_SORTCTRL;
+                        gpio_set_level(LED_BINSTATE_IDLE, 1);
+                        gpio_set_level(LED_BINSTATE_SORT, 0);
+#endif
                     }
                 }
                 break;
@@ -393,23 +400,26 @@ void task_binstatemachine()
                     }
                 }
                 if (timeout_yolo <= 0){
-                    smartbin.binState = BINSTATE_IDLE;
                     gpio_set_level(LED_BINSTATE_YOLO, 1);
                     gpio_set_level(LED_BINSTATE_IDLE, 0);
                     xQueueReset(queue_yolo_result);
                     xQueueReset(queue_yolo_request);
                     ESP_LOGI(TAG, "Timeout, GO TO IDLE");
+                    smartbin.binState = BINSTATE_IDLE;
                 }
                 else{
                     // Move to SORTCTRL state
-                    smartbin.binState = BINSTATE_SORTCTRL;
                     gpio_set_level(LED_BINSTATE_YOLO, 1);
                     gpio_set_level(LED_BINSTATE_SORT, 0);
+                    xQueueReset(queue_yolo_request);
+                    smartbin.binState = BINSTATE_SORTCTRL;
                 }
                 break;
 
             case BINSTATE_SORTCTRL:
                 ESP_LOGI(TAG, "SORT STATE");
+                int angle_l, angle_r;
+#ifndef CONFIG_HW_TEST_ONLY
                 // Read YOLO result
                 //
                 // Select servo angle coresponds to YOLO's result
@@ -424,7 +434,6 @@ void task_binstatemachine()
                     smartbin.objClass = YOLO_OBJCLASS_NONE;
                     break;
                 }
-                int angle_l, angle_r;
                 if (smartbin.objClass == YOLO_OBJCLASS_COLDCUP){
                     ESP_LOGI(TAG, "Sort to COLDCUP slot");
                     angle_l = SERVO_ANGLE_L_COLDCUP;
@@ -442,12 +451,13 @@ void task_binstatemachine()
                 }
                 else{
                     // Reset state to IDLE
-                    smartbin.binState = BINSTATE_IDLE;
                     gpio_set_level(LED_BINSTATE_SORT, 1);
                     gpio_set_level(LED_BINSTATE_IDLE, 0);
                     ESP_LOGI(TAG, "Not any amazon product, GO TO IDLE");
+                    smartbin.binState = BINSTATE_IDLE;
                     break;
                 }
+                // CTRL Arm
                 ESP_LOGI(TAG, "Control Servo");
                 sort_servo_enable(&servo_l);
                 sort_servo_enable(&servo_r);
@@ -455,7 +465,22 @@ void task_binstatemachine()
                 sort_servo_set_angle(&servo_l, angle_l);
                 sort_servo_set_angle(&servo_r, angle_r);
                 vTaskDelay(2000 / portTICK_PERIOD_MS);
-
+#else
+                // CTRL Arm in multiple angles
+                int arr_angle_l[] = {SERVO_ANGLE_L_COLDCUP, SERVO_ANGLE_L_OTHER, SERVO_ANGLE_L_HOTCUP};
+                int arr_angle_r[] = {SERVO_ANGLE_R_COLDCUP, SERVO_ANGLE_R_OTHER, SERVO_ANGLE_R_HOTCUP};
+                for(int i=0; i<=2; i++){
+                    angle_l = arr_angle_l[i];
+                    angle_r = arr_angle_r[i];
+                    ESP_LOGI(TAG, "Control Servo");
+                    sort_servo_enable(&servo_l);
+                    sort_servo_enable(&servo_r);
+                    vTaskDelay(200 / portTICK_PERIOD_MS);
+                    sort_servo_set_angle(&servo_l, angle_l);
+                    sort_servo_set_angle(&servo_r, angle_r);
+                    vTaskDelay(2000 / portTICK_PERIOD_MS);
+                }
+#endif
                 // Open Lid, Let object fall into bin
                 ESP_LOGI(TAG, "Opening");
                 opener_open(&opener_config);
@@ -470,9 +495,10 @@ void task_binstatemachine()
                 sort_servo_disable(&servo_r);
 
                 // Reset state to IDLE
-                smartbin.binState = BINSTATE_IDLE;
                 gpio_set_level(LED_BINSTATE_SORT, 1);
                 gpio_set_level(LED_BINSTATE_IDLE, 0);
+                xQueueReset(queue_yolo_request);
+                smartbin.binState = BINSTATE_IDLE;
                 break;
         }
         vTaskDelay(200 / portTICK_PERIOD_MS);
@@ -481,6 +507,7 @@ void task_binstatemachine()
 
 void task_mqtt_connection()
 {
+    vTaskDelay(3000 / portTICK_PERIOD_MS);
     int msg_id;
     char rxBuf='N';
 
@@ -540,8 +567,12 @@ void app_main(void)
     TaskHandle_t task_handler_2 = NULL;
     TaskHandle_t task_handler_3 = NULL;
 
-    // create tasks
+    // create tasks 
+#ifdef CONFIG_HW_TEST_ONLY
+    ESP_LOGI(TAG, "HW test only, no mqtt connection task (no YOLO server)");
+#else
     xTaskCreate(&task_mqtt_connection, "task mqtt check connection", 8000, NULL, 5, &task_handler_1);
+#endif
     xTaskCreate(&task_readObject, "task object detection sensor", 2048, NULL, 5, &task_handler_3);
     xTaskCreate(&task_binstatemachine, "task smartbin", 4096, NULL, 5, &task_handler_2);
 
