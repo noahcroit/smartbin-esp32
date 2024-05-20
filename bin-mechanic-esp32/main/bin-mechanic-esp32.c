@@ -48,10 +48,10 @@
 #define MQTT_TOPIC_YOLOREQUEST  "YOLO/Request?"
 #define MQTT_TOPIC_YOLORESULT   "YOLO/Result"
 #define MQTT_TOPIC_ALARM        "Alarm"
-#define SERVO_ANGLE_L_COLDCUP   -30
-#define SERVO_ANGLE_R_COLDCUP   -30
-#define SERVO_ANGLE_L_HOTCUP    40
-#define SERVO_ANGLE_R_HOTCUP    40
+#define SERVO_ANGLE_L_COLDCUP   -35
+#define SERVO_ANGLE_R_COLDCUP   -35
+#define SERVO_ANGLE_L_HOTCUP    35
+#define SERVO_ANGLE_R_HOTCUP    35
 #define SERVO_ANGLE_L_OTHER     0
 #define SERVO_ANGLE_R_OTHER     0
 #define SERVO_ANGLE_L_IDLE      0
@@ -264,7 +264,7 @@ void task_readObject()
             smartbin.weight = weight_avg;
             
             // print sensor values
-            //ESP_LOGI(TAG, "distance=%d, weight=%d", smartbin.distance_mm, smartbin.weight);
+            ESP_LOGI(TAG, "distance=%d, weight=%d", smartbin.distance_mm, smartbin.weight);
         }
 
         vTaskDelay(750 / portTICK_PERIOD_MS);
@@ -366,7 +366,7 @@ void task_binstatemachine()
                         vTaskDelay(3000 / portTICK_PERIOD_MS);
                     }
                     else{
-#ifdef CONFIG_HW_TEST_ONLY
+#ifndef CONFIG_HW_TEST_ONLY
                         // Move to YOLO state
                         smartbin.binState = BINSTATE_YOLO;
                         gpio_set_level(LED_BINSTATE_IDLE, 1);
@@ -465,6 +465,19 @@ void task_binstatemachine()
                 sort_servo_set_angle(&servo_l, angle_l);
                 sort_servo_set_angle(&servo_r, angle_r);
                 vTaskDelay(2000 / portTICK_PERIOD_MS);
+                
+                // Open Lid, Let object fall into bin
+                ESP_LOGI(TAG, "Opening");
+                opener_open(&opener_config);
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
+                opener_close(&opener_config);
+                ESP_LOGI(TAG, "Closing");
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
+                sort_servo_set_angle(&servo_l, SERVO_ANGLE_L_IDLE);
+                sort_servo_set_angle(&servo_r, SERVO_ANGLE_R_IDLE);
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
+                sort_servo_disable(&servo_l);
+                sort_servo_disable(&servo_r);
 #else
                 // CTRL Arm in multiple angles
                 int arr_angle_l[] = {SERVO_ANGLE_L_COLDCUP, SERVO_ANGLE_L_OTHER, SERVO_ANGLE_L_HOTCUP};
@@ -479,21 +492,21 @@ void task_binstatemachine()
                     sort_servo_set_angle(&servo_l, angle_l);
                     sort_servo_set_angle(&servo_r, angle_r);
                     vTaskDelay(2000 / portTICK_PERIOD_MS);
+                    if(i == 0 || i == 2) {
+                        // Open Lid, Let object fall into bin
+                        ESP_LOGI(TAG, "Opening");
+                        opener_open(&opener_config);
+                        vTaskDelay(1000 / portTICK_PERIOD_MS);
+                        opener_close(&opener_config);
+                        ESP_LOGI(TAG, "Closing");
+                        vTaskDelay(1000 / portTICK_PERIOD_MS);
+                        sort_servo_set_angle(&servo_l, SERVO_ANGLE_L_IDLE);
+                        sort_servo_set_angle(&servo_r, SERVO_ANGLE_R_IDLE);
+                    }   
                 }
-#endif
-                // Open Lid, Let object fall into bin
-                ESP_LOGI(TAG, "Opening");
-                opener_open(&opener_config);
-                vTaskDelay(1000 / portTICK_PERIOD_MS);
-                opener_close(&opener_config);
-                ESP_LOGI(TAG, "Closing");
-                vTaskDelay(1000 / portTICK_PERIOD_MS);
-                sort_servo_set_angle(&servo_l, SERVO_ANGLE_L_IDLE);
-                sort_servo_set_angle(&servo_r, SERVO_ANGLE_R_IDLE);
-                vTaskDelay(1000 / portTICK_PERIOD_MS);
                 sort_servo_disable(&servo_l);
                 sort_servo_disable(&servo_r);
-
+#endif
                 // Reset state to IDLE
                 gpio_set_level(LED_BINSTATE_SORT, 1);
                 gpio_set_level(LED_BINSTATE_IDLE, 0);
@@ -596,7 +609,8 @@ int isObjectPresent(smartbin_t *bin){
     }
     return 0;
 #endif
-    if((bin->distance_mm < ACTIVATE_DISTANCE_MM) || (bin->weight >= PRESENSE_WEIGHT_THRESHOLD)){
+    //if((bin->distance_mm < ACTIVATE_DISTANCE_MM) || (bin->weight >= PRESENSE_WEIGHT_THRESHOLD)){
+    if(bin->weight >= PRESENSE_WEIGHT_THRESHOLD){
         ESP_LOGI(TAG, "Presense!");
         return 1;
     }

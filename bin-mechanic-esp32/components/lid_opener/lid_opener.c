@@ -90,11 +90,14 @@ int opener_open(opener_config_t *config){
         .hpoint         = 0
     };
     ledc_channel_config(&ledc_channel_in1);
+    /*
     while (!opener_isfullopen(config)){
 #if(LID_OPEN_NON_BLOCK != 0)
         vTaskDelay(50 / portTICK_PERIOD_MS);
 #endif
     }
+    */
+    vTaskDelay(500 / portTICK_PERIOD_MS);
     //gpio_set_level(config->in1, 0);
     ledc_channel_in1.duty = 0;
     ledc_channel_config(&ledc_channel_in1);
