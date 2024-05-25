@@ -56,8 +56,8 @@
 #define SERVO_ANGLE_R_OTHER     0
 #define SERVO_ANGLE_L_IDLE      0
 #define SERVO_ANGLE_R_IDLE      0
-#define OVERWEIGHT_THRESHOLD        (int32_t)70000
-#define PRESENSE_WEIGHT_THRESHOLD   (int32_t)40000
+#define OVERWEIGHT_THRESHOLD        (int32_t)200000
+#define PRESENSE_WEIGHT_THRESHOLD   (int32_t)80000
 #define ACTIVATE_DISTANCE_MM    180
 #define DISTANCE_SENSOR_I2C_PORT    I2C_NUM_0  
 #define DISTANCE_SENSOR_I2C_PIN_SCL GPIO_NUM_22  
@@ -225,6 +225,7 @@ void task_readObject()
                               DISTANCE_SENSOR_XSHUT, 
                               DISTANCE_SENSOR_I2C_ADDRESS,
                               DISTANCE_SENSOR_2V8);
+    /*
     if(v_sensor == NULL){
         ESP_LOGI(TAG, "Cannot see I2C device");
     }
@@ -234,11 +235,13 @@ void task_readObject()
         vTaskDelay(100 / portTICK_PERIOD_MS);
         vl53l0x_startContinuous(v_sensor, 1000);
     }
+    */
     
     /*
      * Weight sensor amplifier HX711 configuration
      *
      */
+    ESP_LOGI(TAG, "HX711 Configuration ***");
     int32_t weight_avg;
     hx711_t hx711_sensor = {
         .dout = CONFIG_HX711_DOUT_GPIO,
@@ -250,7 +253,7 @@ void task_readObject()
     while (true){
         if(smartbin.binState == BINSTATE_IDLE){
             // read object distance
-            smartbin.distance_mm = vl53l0x_readRangeContinuousMillimeters(v_sensor);
+            //smartbin.distance_mm = vl53l0x_readRangeContinuousMillimeters(v_sensor);
 
             // read object weight with moving average
             esp_err_t r = hx711_wait(&hx711_sensor, 500);
@@ -317,7 +320,6 @@ void task_binstatemachine()
     sort_servo_enable(&servo_r);
     sort_servo_set_angle(&servo_l, SERVO_ANGLE_L_IDLE);
     sort_servo_set_angle(&servo_r, SERVO_ANGLE_R_IDLE);
-    //vTaskDelay(1000 / portTICK_PERIOD_MS);
     sort_servo_disable(&servo_l);
     sort_servo_disable(&servo_r);
     
@@ -360,7 +362,6 @@ void task_binstatemachine()
         switch (smartbin.binState){
             case BINSTATE_IDLE:
                 if (isObjectPresent(&smartbin)){
-                    vTaskDelay(1000 / portTICK_PERIOD_MS);
                     if (smartbin.weight > OVERWEIGHT_THRESHOLD){
                         xQueueSend(queue_alarm, (void*)"W", (TickType_t)0);
                         vTaskDelay(3000 / portTICK_PERIOD_MS);
@@ -512,6 +513,8 @@ void task_binstatemachine()
                 gpio_set_level(LED_BINSTATE_IDLE, 0);
                 xQueueReset(queue_yolo_request);
                 smartbin.binState = BINSTATE_IDLE;
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
+                smartbin.weight = 0;
                 break;
         }
         vTaskDelay(200 / portTICK_PERIOD_MS);
