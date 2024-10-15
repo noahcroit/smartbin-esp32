@@ -656,8 +656,12 @@ def send_email(userdetail):
     f.close()
 
     # Email configuration
-    subject = "Get free coffee from NIDA Hub Smartbin"
-    message = "This is your coupon from smartbin. You got 1 free cup of coffee"
+    subject = "Thank You for Recycling"
+    message = "Here’s a little something to thank you for helping us make the world a brighter place!" + \
+            "10 Baht off your next purchase. Offer valid in store at NIDA only." + \
+            "\nCOUPON Code : Gift10" + \
+            "Best Regards,\nNIDA HUB [xAMAZON] Recycling Campaign" + \
+            "**** NIDA HUB ESG: Ideation & Prototype ****"
 
     # SMTP server configuration for Outlook
     smtp_server = "smtp.office365.com"
