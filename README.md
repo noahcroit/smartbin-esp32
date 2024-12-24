@@ -64,6 +64,22 @@ $ mpg123 -o alsa:hw:1,0 -f 30000
 -o => audio output target
 -f => scale of volume control (0 - 32768)
 
+### Data for smartbin
+The user face, .json for user info and .mp3 files are stored in `db` folder. To use this project, create `db` folder first and put the data like this
+db
+|
+|--/face
+|    |- User face images
+|
+|--/sound
+|    |- .mp3 files
+|
+|-- img_coupon.jpg
+|
+|-- userinfo.json files
+
+The example format for userinfo.json format can be found in `object-detection/user.json` 
+
 
 ### Startup script
 Use crontab to run startup script smartbin-startup.sh.
