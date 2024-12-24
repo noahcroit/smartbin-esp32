@@ -643,6 +643,7 @@ def save_json_userdetail(user_dict, user_json):
 def send_email(userdetail):
     import smtplib
     from email.mime.text import MIMEText
+    from email.mime.image import MIMEImage
     from email.mime.multipart import MIMEMultipart
 
     print("send email to ", userdetail["email"])
@@ -673,6 +674,13 @@ def send_email(userdetail):
     msg['To'] = recipient_email
     msg['Subject'] = subject
     msg.attach(MIMEText(message, 'plain'))
+
+    # Attach coupou image
+    ImgFileName = "/home/smartbin/smartbin-esp32/db/img_coupon.jpg"
+    with open(ImgFileName, 'rb') as f:
+        img_data = f.read()
+    image = MIMEImage(img_data, name=os.path.basename(ImgFileName))
+    msg.attach(image)
 
     # Establish a secure SMTP connection
     try:
