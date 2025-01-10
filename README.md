@@ -15,6 +15,14 @@ $ idf.py build
 $ idf.py flash -p /dev/ttyUSB0
 ```
 
+Pinout for sensors \
+VL53L0X distance sensor \
+- SDA -> D21 \
+- SCL -> D22 \
+HX711 weight sensor \
+- Data -> D33 \
+- CLK  -> D32 \
+
 ## YOLO worker for garbage classifier
 Pre-built OpenCV-python can be used, Run on Ubuntu server.
 ```
