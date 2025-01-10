@@ -225,7 +225,6 @@ void task_readObject()
                               DISTANCE_SENSOR_XSHUT, 
                               DISTANCE_SENSOR_I2C_ADDRESS,
                               DISTANCE_SENSOR_2V8);
-    /*
     if(v_sensor == NULL){
         ESP_LOGI(TAG, "Cannot see I2C device");
     }
@@ -235,7 +234,6 @@ void task_readObject()
         vTaskDelay(100 / portTICK_PERIOD_MS);
         vl53l0x_startContinuous(v_sensor, 1000);
     }
-    */
     
     /*
      * Weight sensor amplifier HX711 configuration
@@ -248,12 +246,12 @@ void task_readObject()
         .pd_sck = CONFIG_HX711_PD_SCK_GPIO,
         .gain = HX711_GAIN_A_64
     };
-    ESP_ERROR_CHECK(hx711_init(&hx711_sensor));
+    hx711_init(&hx711_sensor);
 
     while (true){
         if(smartbin.binState == BINSTATE_IDLE){
             // read object distance
-            //smartbin.distance_mm = vl53l0x_readRangeContinuousMillimeters(v_sensor);
+            smartbin.distance_mm = vl53l0x_readRangeContinuousMillimeters(v_sensor);
 
             // read object weight with moving average
             esp_err_t r = hx711_wait(&hx711_sensor, 500);
@@ -361,6 +359,7 @@ void task_binstatemachine()
     while (true){
         switch (smartbin.binState){
             case BINSTATE_IDLE:
+                gpio_set_level(LED_BINSTATE_IDLE, 0);
                 if (isObjectPresent(&smartbin)){
                     if (smartbin.weight > OVERWEIGHT_THRESHOLD){
                         xQueueSend(queue_alarm, (void*)"W", (TickType_t)0);
@@ -612,8 +611,7 @@ int isObjectPresent(smartbin_t *bin){
     }
     return 0;
 #endif
-    //if((bin->distance_mm < ACTIVATE_DISTANCE_MM) || (bin->weight >= PRESENSE_WEIGHT_THRESHOLD)){
-    if(bin->weight >= PRESENSE_WEIGHT_THRESHOLD){
+    if((bin->distance_mm < ACTIVATE_DISTANCE_MM) || (bin->weight >= PRESENSE_WEIGHT_THRESHOLD)){
         ESP_LOGI(TAG, "Presense!");
         return 1;
     }
