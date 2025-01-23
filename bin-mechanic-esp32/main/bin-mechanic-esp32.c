@@ -58,7 +58,8 @@
 #define SERVO_ANGLE_R_IDLE      0
 #define OVERWEIGHT_THRESHOLD        (int32_t)200000
 #define PRESENSE_WEIGHT_THRESHOLD   (int32_t)80000
-#define ACTIVATE_DISTANCE_MM    180
+#define PRESENSE_COUNT_THRESHOLD   (int32_t)3
+#define ACTIVATE_DISTANCE_MM    190
 #define DISTANCE_SENSOR_I2C_PORT    I2C_NUM_0  
 #define DISTANCE_SENSOR_I2C_PIN_SCL GPIO_NUM_22  
 #define DISTANCE_SENSOR_I2C_PIN_SDA GPIO_NUM_21  
@@ -356,11 +357,16 @@ void task_binstatemachine()
      * state-machine loop
      *
      */
+    int objPresentCnt=0;
     while (true){
         switch (smartbin.binState){
             case BINSTATE_IDLE:
                 gpio_set_level(LED_BINSTATE_IDLE, 0);
                 if (isObjectPresent(&smartbin)){
+                    objPresentCnt++;
+                }
+                if (objPresentCnt > PRESENSE_COUNT_THRESHOLD){
+                    objPresentCnt=0;
                     if (smartbin.weight > OVERWEIGHT_THRESHOLD){
                         xQueueSend(queue_alarm, (void*)"W", (TickType_t)0);
                         vTaskDelay(3000 / portTICK_PERIOD_MS);
@@ -611,7 +617,8 @@ int isObjectPresent(smartbin_t *bin){
     }
     return 0;
 #endif
-    if((bin->distance_mm < ACTIVATE_DISTANCE_MM) || (bin->weight >= PRESENSE_WEIGHT_THRESHOLD)){
+    //if((bin->distance_mm < ACTIVATE_DISTANCE_MM) || (bin->weight >= PRESENSE_WEIGHT_THRESHOLD)){
+    if(bin->weight >= PRESENSE_WEIGHT_THRESHOLD){
         ESP_LOGI(TAG, "Presense!");
         return 1;
     }
